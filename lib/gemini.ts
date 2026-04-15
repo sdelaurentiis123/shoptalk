@@ -38,7 +38,7 @@ EXTRACTION TARGETS:
    - Safety warnings when the video shows one ("Do not touch the top rack: surface is hot.")
    - Verification / pass-fail criteria ("Confirm red light turns green.", "Rack must sit flush with guide rails.")
    - Tools / consumables used, by name
-   - Every substep has a timeSeconds anchored to when it happens in the video.
+   - Every substep has a timeSeconds: the integer second on the VIDEO CLOCK at which this substep is demonstrated or narrated. If the action is shown, use the second it occurs. If the trainer is describing a real-world step that is not visually demonstrated (e.g. "wait 20 minutes", "log on clipboard at end of shift"), use the second at which the trainer MENTIONS that substep. Never use a real-world time offset; never use a time past the end of the video.
 
 3. A screenplay-style transcript of the entire video. This is a continuous play-by-play, third person present tense, of everything happening — what's visible AND what's said. Format each line as:
    [m:ss] narration
@@ -65,7 +65,7 @@ TIMESTAMP RULES — STRICT. Do not hallucinate.
 - Steps must not overlap in time. Step N's startSeconds ≥ step N-1's endSeconds.
 - timeSeconds for each substep must fall within its parent step's [startSeconds, endSeconds] range.
 - If you are uncertain of an exact second, round DOWN to the nearest second you actually observed — never extrapolate past observed content.
-- If a substep's precise moment cannot be observed, use the step's startSeconds rather than inventing a timestamp.
+- For narrated-future or procedural-context substeps (e.g. "wait 20 minutes", "log at end of shift"), timeSeconds is the second the trainer MENTIONS it on the video clock, not the real-world offset. Spread substeps within a narrated block according to the order and pace of the narration — they must not all share the same timeSeconds unless the trainer literally mentions them simultaneously.
 - The transcript's [m:ss] markers must also respect totalSeconds and be monotonically non-decreasing.
 
 OUTPUT FORMAT:
@@ -145,53 +145,180 @@ function sanitizeTimestamps(out: GeminiOut, mimeType: string): GeminiOut {
   }
 
   const totalFromModel = coerceSeconds(out.totalSeconds, 24 * 60 * 60) ?? 0;
-  const total = totalFromModel > 0 ? totalFromModel : 0;
+  // When Gemini omits totalSeconds, don't collapse every timestamp to 0 — use
+  // a generous cap so later coerceSeconds() calls don't clamp valid values.
+  const total = totalFromModel > 0 ? totalFromModel : 24 * 60 * 60;
+  const hasReliableTotal = totalFromModel > 0;
 
   let lastEnd = 0;
   const cleanedSteps = (out.steps ?? []).map((s) => {
     let start = coerceSeconds((s as any).startSeconds, total) ?? lastEnd;
-    let end = coerceSeconds((s as any).endSeconds, total) ?? Math.min(start + 5, total);
-    // Keep steps ordered and non-overlapping.
+    let end = coerceSeconds((s as any).endSeconds, total) ?? start + 5;
     if (start < lastEnd) start = lastEnd;
-    if (end <= start) end = Math.min(start + 1, Math.max(total, start + 1));
-    if (end > total && total > 0) end = total;
+    if (end <= start) end = start + 1;
+    if (hasReliableTotal && end > total) end = total;
     lastEnd = end;
 
+    // Keep Gemini's timestamps when they fall inside the step window; clamp
+    // into range if they're slightly off; leave null when absent (the DB
+    // column is nullable — honest > invented).
     const substeps = (s.substeps ?? []).map((ss) => {
       let ts = coerceSeconds((ss as any).timeSeconds, total);
-      if (ts == null || ts < start || ts > end) ts = start;
+      if (ts != null) {
+        if (ts < start) ts = start;
+        else if (ts > end) ts = end;
+      }
       return { ...ss, timeSeconds: ts };
     });
 
     return { ...s, startSeconds: start, endSeconds: end, substeps };
   });
 
-  return { ...out, totalSeconds: total, steps: cleanedSteps };
+  return { ...out, totalSeconds: hasReliableTotal ? total : 0, steps: cleanedSteps };
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+const RESUMABLE_THRESHOLD = 20 * 1024 * 1024;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+
+async function uploadLargeFileResumable(
+  buf: Buffer,
+  mimeType: string,
+  displayName: string,
+): Promise<{ name: string; uri: string; mimeType: string }> {
+  const apiKey = process.env.GEMINI_API_KEY!;
+  const totalBytes = buf.length;
+
+  // 1. Start resumable session.
+  const startRes = await withTimeout(
+    fetch(
+      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "X-Goog-Upload-Protocol": "resumable",
+          "X-Goog-Upload-Command": "start",
+          "X-Goog-Upload-Header-Content-Length": String(totalBytes),
+          "X-Goog-Upload-Header-Content-Type": mimeType,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ file: { display_name: displayName } }),
+      },
+    ),
+    30_000,
+    "files:resumable:start",
+  );
+  if (!startRes.ok) {
+    throw new Error(
+      `Gemini resumable start failed: ${startRes.status} ${await startRes.text()}`,
+    );
+  }
+  const sessionUrl = startRes.headers.get("x-goog-upload-url");
+  if (!sessionUrl) throw new Error("Gemini resumable start: no upload URL in response");
+
+  // 2. Upload chunks.
+  const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
+  let lastMeta: any = null;
+  for (let i = 0; i < totalChunks; i++) {
+    const offset = i * CHUNK_SIZE;
+    const end = Math.min(offset + CHUNK_SIZE, totalBytes);
+    const slice = buf.subarray(offset, end);
+    const isLast = i === totalChunks - 1;
+    const command = isLast ? "upload, finalize" : "upload";
+
+    let attempt = 0;
+    while (true) {
+      try {
+        const res = await withTimeout(
+          fetch(sessionUrl, {
+            method: "POST",
+            headers: {
+              "X-Goog-Upload-Offset": String(offset),
+              "X-Goog-Upload-Command": command,
+              "Content-Length": String(slice.length),
+            },
+            body: new Uint8Array(slice.buffer, slice.byteOffset, slice.byteLength) as any,
+          }),
+          120_000,
+          `files:resumable:chunk:${i + 1}/${totalChunks}`,
+        );
+        if (!res.ok) {
+          throw new Error(
+            `chunk ${i + 1}/${totalChunks} status ${res.status}: ${await res.text()}`,
+          );
+        }
+        console.log(`[gemini] upload:chunk ${i + 1}/${totalChunks}`);
+        if (isLast) lastMeta = await res.json();
+        break;
+      } catch (e) {
+        attempt++;
+        if (attempt >= 3) throw e;
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+  }
+
+  const f = lastMeta?.file;
+  if (!f?.name) throw new Error("Gemini resumable finalize: missing file metadata");
+  return {
+    name: f.name,
+    uri: f.uri,
+    mimeType: f.mimeType ?? mimeType,
+  };
 }
 
 async function uploadAndWait(buf: Buffer, mimeType: string, fileName: string) {
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const tmpPath = join(tmpdir(), `shoptalk-${crypto.randomUUID()}-${safeName}`);
-  await writeFile(tmpPath, buf);
+  console.log("[gemini] upload:start", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
 
-  try {
-    let file = await ai().files.upload({
-      file: tmpPath,
-      config: { mimeType, displayName: fileName },
-    });
+  let fileName0: string;
+  let fileUri: string;
+  let fileMime: string;
 
-    for (let i = 0; i < 120 && file.state !== "ACTIVE"; i++) {
-      if (file.state === "FAILED") throw new Error(`Gemini file processing failed: ${JSON.stringify(file)}`);
-      await new Promise((r) => setTimeout(r, 2000));
-      if (!file.name) throw new Error("Gemini: file has no name");
-      file = await ai().files.get({ name: file.name });
+  if (buf.length > RESUMABLE_THRESHOLD) {
+    const r = await uploadLargeFileResumable(buf, mimeType, fileName);
+    fileName0 = r.name;
+    fileUri = r.uri;
+    fileMime = r.mimeType;
+  } else {
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const tmpPath = join(tmpdir(), `shoptalk-${crypto.randomUUID()}-${safeName}`);
+    await writeFile(tmpPath, buf);
+    try {
+      const f = await withTimeout(
+        ai().files.upload({ file: tmpPath, config: { mimeType, displayName: fileName } }),
+        120_000,
+        "files.upload",
+      );
+      if (!f.name) throw new Error("Gemini: file has no name");
+      fileName0 = f.name;
+      fileUri = f.uri ?? "";
+      fileMime = f.mimeType ?? mimeType;
+    } finally {
+      unlink(tmpPath).catch(() => {});
     }
-    if (file.state !== "ACTIVE") throw new Error("Gemini: file did not become ACTIVE in time");
-    if (!file.uri || !file.mimeType) throw new Error("Gemini: uploaded file missing uri/mimeType");
-    return { uri: file.uri, mimeType: file.mimeType };
-  } finally {
-    unlink(tmpPath).catch(() => {});
   }
+  console.log("[gemini] upload:done", { name: fileName0 });
+
+  // Poll for ACTIVE.
+  let file = await withTimeout(ai().files.get({ name: fileName0 }), 15_000, "files.get");
+  for (let i = 0; i < 150 && file.state !== "ACTIVE"; i++) {
+    if (file.state === "FAILED")
+      throw new Error(`Gemini file processing failed: ${JSON.stringify(file)}`);
+    await new Promise((r) => setTimeout(r, 2000));
+    file = await withTimeout(ai().files.get({ name: fileName0 }), 15_000, "files.get");
+  }
+  if (file.state !== "ACTIVE") throw new Error("Gemini: file did not become ACTIVE in time");
+  if (!file.uri || !file.mimeType) throw new Error("Gemini: uploaded file missing uri/mimeType");
+  console.log("[gemini] poll:active");
+  return { uri: file.uri, mimeType: file.mimeType };
 }
 
 export async function processWithGemini(
@@ -210,23 +337,33 @@ export async function processWithGemini(
     mediaResolution: "MEDIA_RESOLUTION_HIGH",
   } as any;
 
+  console.log("[gemini] generate:start", { useInline });
   const response = useInline
-    ? await ai().models.generateContent({
-        model: MODEL,
-        contents: createUserContent([
-          { inlineData: { mimeType, data: buf.toString("base64") } },
-          SYSTEM_PROMPT,
-        ]),
-        config,
-      })
+    ? await withTimeout(
+        ai().models.generateContent({
+          model: MODEL,
+          contents: createUserContent([
+            { inlineData: { mimeType, data: buf.toString("base64") } },
+            SYSTEM_PROMPT,
+          ]),
+          config,
+        }),
+        240_000,
+        "generateContent",
+      )
     : await (async () => {
         const { uri, mimeType: uploadedMime } = await uploadAndWait(buf, mimeType, fileName);
-        return ai().models.generateContent({
-          model: MODEL,
-          contents: createUserContent([createPartFromUri(uri, uploadedMime), SYSTEM_PROMPT]),
-          config,
-        });
+        return withTimeout(
+          ai().models.generateContent({
+            model: MODEL,
+            contents: createUserContent([createPartFromUri(uri, uploadedMime), SYSTEM_PROMPT]),
+            config,
+          }),
+          240_000,
+          "generateContent",
+        );
       })();
+  console.log("[gemini] generate:done");
 
   const text = response.text;
   if (!text) throw new Error("Gemini: empty response");
