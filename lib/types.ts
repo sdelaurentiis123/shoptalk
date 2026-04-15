@@ -10,6 +10,7 @@ export interface Facility {
   name: string;
   join_code: string;
   admin_user_id: string;
+  default_language: LangCode;
   created_at: string;
   updated_at: string;
 }

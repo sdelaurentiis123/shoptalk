@@ -3,8 +3,6 @@ import type { LangCode } from "./types";
 export const LANGUAGES: { code: LangCode; label: string }[] = [
   { code: "en", label: "English" },
   { code: "es", label: "Español" },
-  { code: "zh", label: "中文" },
-  { code: "ar", label: "العربية" },
 ];
 
 export const LANG_NAME: Record<LangCode, string> = {

@@ -3,11 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { SopWithSteps, StepWithSubsteps, Role } from "@/lib/types";
+import type { SopWithSteps, StepWithSubsteps, Role, Station } from "@/lib/types";
 import { fmtTime } from "@/lib/utils";
 import EditStepModal from "./edit-step-modal";
+import PublishSopModal from "./publish-sop-modal";
 
-export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role }) {
+export default function SopDetail({
+  sop,
+  role,
+  stations: initialStations,
+}: {
+  sop: SopWithSteps;
+  role: Role;
+  stations: Station[];
+}) {
+  const [stations, setStations] = useState<Station[]>(initialStations);
+  const [stationId, setStationId] = useState<string | null>(sop.station_id);
+  const [publishModal, setPublishModal] = useState<null | "publish" | "recategorize">(null);
   const [steps, setSteps] = useState<StepWithSubsteps[]>(
     [...sop.steps].sort((a, b) => a.sort_order - b.sort_order).map((s) => ({
       ...s,
@@ -75,7 +87,7 @@ export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role
   }
 
   async function setSopStatus(next: "draft" | "active" | "archived") {
-    const res = await fetch(`/api/sops/${sop.id}/status`, {
+    const res = await fetch(`/api/sops/${sop.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: next }),
@@ -103,14 +115,28 @@ export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role
         {role === "admin" && (
           <div className="flex gap-2">
             {status === "draft" && (
-              <button onClick={() => setSopStatus("active")} className="px-4 py-[7px] rounded-full bg-success text-white text-[13px] font-medium">
-                Set Active
+              <button
+                onClick={() => setPublishModal("publish")}
+                className="px-4 py-[7px] rounded-full bg-success text-white text-[13px] font-medium"
+              >
+                Publish
               </button>
             )}
             {status === "active" && (
-              <button onClick={() => setSopStatus("archived")} className="px-4 py-[7px] rounded-full border border-border text-[13px]">
-                Archive
-              </button>
+              <>
+                <button
+                  onClick={() => setPublishModal("recategorize")}
+                  className="px-4 py-[7px] rounded-full border border-border text-[13px]"
+                >
+                  {stations.find((s) => s.id === stationId)?.name ?? "No station"}
+                </button>
+                <button
+                  onClick={() => setSopStatus("archived")}
+                  className="px-4 py-[7px] rounded-full border border-border text-[13px]"
+                >
+                  Archive
+                </button>
+              </>
             )}
             <button
               onClick={() => setEditMode((v) => !v)}
@@ -301,6 +327,24 @@ export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role
             setEditing(null);
           }}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {publishModal && (
+        <PublishSopModal
+          sopId={sop.id}
+          sopTitle={sop.title}
+          currentStationId={stationId}
+          stations={stations}
+          mode={publishModal}
+          onClose={() => setPublishModal(null)}
+          onDone={(nextStationId, newStations) => {
+            if (newStations) setStations(newStations);
+            setStationId(nextStationId);
+            if (publishModal === "publish") setStatus("active");
+            setPublishModal(null);
+            router.refresh();
+          }}
         />
       )}
     </div>

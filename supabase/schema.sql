@@ -5,6 +5,7 @@ create table if not exists facilities (
   name text not null,
   join_code text unique not null,
   admin_user_id uuid references auth.users(id) not null,
+  default_language text default 'en',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

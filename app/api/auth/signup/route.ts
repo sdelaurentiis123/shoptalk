@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateJoinCode } from "@/lib/utils";
 
@@ -30,9 +31,8 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const data = { user: created.user };
 
-  // Generate unique join code.
+  // Generate a unique join code.
   let code = generateJoinCode(facility_name);
   for (let i = 0; i < 5; i++) {
     const { data: exists } = await admin.from("facilities").select("id").eq("join_code", code).maybeSingle();
@@ -42,19 +42,21 @@ export async function POST(req: Request) {
 
   const { data: fac, error: fErr } = await admin
     .from("facilities")
-    .insert({ name: facility_name, join_code: code, admin_user_id: data.user.id })
+    .insert({ name: facility_name, join_code: code, admin_user_id: created.user.id })
     .select()
     .single();
-  if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 });
+  if (fErr) {
+    console.error("[signup] facility insert:", fErr);
+    return NextResponse.json({ error: fErr.message }, { status: 500 });
+  }
 
-  // Seed default stations.
-  await admin.from("stations").insert(
-    ["Baking", "Packaging", "Mixing", "Sanitation"].map((name, i) => ({
-      facility_id: fac!.id,
-      name,
-      sort_order: i,
-    })),
-  );
+  // Attach the session cookie in the same response so the client is signed in.
+  const ssr = createClient();
+  const { error: sErr } = await ssr.auth.signInWithPassword({ email, password });
+  if (sErr) {
+    console.error("[signup] auto-signin:", sErr);
+    return NextResponse.json({ error: sErr.message }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true, facility: fac });
 }

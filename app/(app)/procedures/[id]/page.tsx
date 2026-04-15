@@ -10,15 +10,17 @@ export default async function SopPage({ params }: { params: { id: string } }) {
   if (!role || !facilityId) redirect("/login");
 
   const supabase = createClient();
-  const { data: sop } = await supabase
-    .from("sops")
-    .select("*, steps(*, substeps(*))")
-    .eq("id", params.id)
-    .eq("facility_id", facilityId)
-    .maybeSingle();
+  const [{ data: sop }, { data: stations }] = await Promise.all([
+    supabase
+      .from("sops")
+      .select("*, steps(*, substeps(*))")
+      .eq("id", params.id)
+      .eq("facility_id", facilityId)
+      .maybeSingle(),
+    supabase.from("stations").select("*").eq("facility_id", facilityId).order("sort_order"),
+  ]);
   if (!sop) notFound();
 
-  // Mint a fresh R2 signed GET URL for playback on every view.
   let signed = sop.file_url as string | null;
   if (sop.file_path) {
     try {
@@ -29,5 +31,5 @@ export default async function SopPage({ params }: { params: { id: string } }) {
   }
 
   const full = { ...sop, file_url: signed } as SopWithSteps;
-  return <SopDetail sop={full} role={role} />;
+  return <SopDetail sop={full} role={role} stations={stations ?? []} />;
 }
