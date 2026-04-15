@@ -64,10 +64,6 @@ function hashEnglish(input: SopIn): string {
   return h.digest("hex");
 }
 
-/**
- * Mark a SOP as pending translation. Idempotent; callers invoke right before
- * kicking off a background `translateSop` to let the UI show a grayed state.
- */
 export async function markTranslationPending(admin: SupabaseClient, sopId: string) {
   await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
 }
@@ -76,6 +72,15 @@ export async function markTranslationPending(admin: SupabaseClient, sopId: strin
  * Reads the SOP + steps + substeps, translates via Claude, writes the `_es`
  * columns back. Skips entirely if the English hash hasn't changed since the
  * last successful translation. Sets `translation_status` and `english_hash`.
+ *
+ * Writes are batched into three calls total:
+ *   1. one upsert for all step translations
+ *   2. one upsert for all substep translations
+ *   3. one update on the sops row that atomically sets the Spanish fields
+ *      AND flips translation_status='ready' AND stores the new hash
+ *
+ * If the serverless function is killed after step 3 returns we're still safe;
+ * if it dies mid-sequence, the next trigger will re-run and finish.
  */
 export async function translateSop(admin: SupabaseClient, sopId: string): Promise<void> {
   const { data: sop, error } = await admin
@@ -103,11 +108,14 @@ export async function translateSop(admin: SupabaseClient, sopId: string): Promis
 
   const newHash = hashEnglish(input);
   if (newHash === sop.english_hash && sop.translation_status === "ready") {
-    return; // nothing changed, nothing to do
+    return;
   }
 
   if (!input.title && input.steps.length === 0) {
-    await admin.from("sops").update({ translation_status: "ready", english_hash: newHash }).eq("id", sopId);
+    await admin
+      .from("sops")
+      .update({ translation_status: "ready", english_hash: newHash })
+      .eq("id", sopId);
     return;
   }
 
@@ -155,41 +163,47 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
 
     const parsed: Translated = JSON.parse(trimJson(raw));
 
+    // Build per-row lookups so we can emit batched upserts (one round-trip
+    // for every steps, one for every substeps — regardless of SOP size).
+    const stepById = new Map(parsed.steps.map((s) => [s.id, s]));
+    const stepPatches: { id: string; title_es: string; description_es: string }[] = [];
+    const substepPatches: { id: string; text_es: string }[] = [];
+
+    for (const step of input.steps) {
+      const t = stepById.get(step.id);
+      stepPatches.push({
+        id: step.id,
+        title_es: t?.title_es ?? "",
+        description_es: t?.description_es ?? "",
+      });
+      const tSubs = new Map((t?.substeps ?? []).map((s) => [s.id, s.text_es ?? ""]));
+      for (const sub of step.substeps) {
+        substepPatches.push({ id: sub.id, text_es: tSubs.get(sub.id) ?? "" });
+      }
+    }
+
+    if (stepPatches.length > 0) {
+      const { error: sErr } = await admin.from("steps").upsert(stepPatches, { onConflict: "id" });
+      if (sErr) throw new Error(`steps upsert: ${sErr.message}`);
+    }
+    if (substepPatches.length > 0) {
+      const { error: ssErr } = await admin
+        .from("substeps")
+        .upsert(substepPatches, { onConflict: "id" });
+      if (ssErr) throw new Error(`substeps upsert: ${ssErr.message}`);
+    }
+
+    // Atomic finish: Spanish SOP fields + status='ready' + new hash, all in one.
     await admin
       .from("sops")
       .update({
         title_es: parsed.title_es ?? "",
         description_es: parsed.description_es ?? "",
         transcript_es: parsed.transcript_es ?? "",
+        translation_status: "ready",
+        english_hash: newHash,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", sopId);
-
-    const stepById = new Map(parsed.steps.map((s) => [s.id, s]));
-    const substepById = new Map<string, TranslatedSubstep>();
-    for (const s of parsed.steps) {
-      for (const ss of s.substeps ?? []) substepById.set(ss.id, ss);
-    }
-
-    for (const step of input.steps) {
-      const t = stepById.get(step.id);
-      if (t) {
-        await admin
-          .from("steps")
-          .update({ title_es: t.title_es ?? "", description_es: t.description_es ?? "" })
-          .eq("id", step.id);
-      }
-      for (const sub of step.substeps) {
-        const ts = substepById.get(sub.id);
-        if (ts) {
-          await admin.from("substeps").update({ text_es: ts.text_es ?? "" }).eq("id", sub.id);
-        }
-      }
-    }
-
-    await admin
-      .from("sops")
-      .update({ translation_status: "ready", english_hash: newHash })
       .eq("id", sopId);
   } catch (e) {
     console.error("[translate] failed:", e);

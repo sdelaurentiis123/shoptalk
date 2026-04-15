@@ -48,6 +48,17 @@ export default function SopDetail({
   const isVideo = sop.type === "video";
   const totalSeconds = sop.total_seconds;
 
+  // Bind the video src imperatively, only when the SOP itself changes (not on
+  // every router.refresh() — otherwise a new signed URL each poll resets
+  // playback to 0).
+  useEffect(() => {
+    if (!isVideo) return;
+    const v = videoRef.current;
+    if (!v || !sop.file_url) return;
+    if (v.src !== sop.file_url) v.src = sop.file_url;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sop.id, isVideo]);
+
   // While a translation is in flight, refresh the page every few seconds so
   // the Spanish fields flip in the moment they're ready. Stops once status is
   // no longer "pending".
@@ -266,7 +277,7 @@ export default function SopDetail({
       <div className={`grid md:grid-cols-[1fr_340px] gap-6 transition-opacity ${isTranslating ? "opacity-60" : ""}`}>
         <div>
           {isVideo && sop.file_url ? (
-            <video ref={videoRef} controls src={sop.file_url} className="w-full rounded-xl bg-black aspect-video" />
+            <video ref={videoRef} controls className="w-full rounded-xl bg-black aspect-video" />
           ) : sop.type === "pdf" && sop.file_url ? (
             <iframe src={sop.file_url} className="w-full h-[75vh] rounded-xl bg-surface border border-border" />
           ) : sop.type === "image" && sop.file_url ? (
