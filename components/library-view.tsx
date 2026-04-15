@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Sop, Station, LangCode } from "@/lib/types";
@@ -28,6 +28,21 @@ export default function LibraryView({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [station, setStation] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
+
+  // Keep the list in sync when the server version changes (navigating back, etc.).
+  useEffect(() => {
+    setSops(initial);
+  }, [initial]);
+
+  // If any SOP is still translating, poll the route's server components every
+  // few seconds so the badge clears and Spanish content lands without a manual
+  // refresh.
+  const anyPending = useMemo(() => sops.some((s) => s.translation_status === "pending"), [sops]);
+  useEffect(() => {
+    if (!anyPending) return;
+    const id = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(id);
+  }, [anyPending, router]);
 
   async function deleteSop(e: React.MouseEvent, sop: Sop) {
     e.stopPropagation();
@@ -89,10 +104,18 @@ export default function LibraryView({
             href={`/procedures/${sop.id}`}
             className="group relative px-6 py-[18px] bg-surface hover:bg-[#FAFAFA] transition"
           >
-            <div className="flex justify-between items-baseline mb-1 pr-8">
+            <div className="flex justify-between items-baseline mb-1 pr-8 gap-3">
               <span className="text-[15px] font-semibold">{pickI18n(sop, "title", lang)}</span>
-              {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
-              {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {sop.translation_status === "pending" && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary bg-primary-bg px-2 py-0.5 rounded-full">
+                    <span className="w-2 h-2 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    {t(lang, "translatingBadge")}
+                  </span>
+                )}
+                {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
+                {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
+              </div>
             </div>
             {role === "admin" && (
               <button
