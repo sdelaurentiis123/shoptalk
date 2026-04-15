@@ -36,6 +36,8 @@ export default function SopDetail({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const translationStatus = sop.translation_status;
+  const isTranslating = lang === "es" && translationStatus === "pending";
   const [status, setStatus] = useState(sop.status);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -43,6 +45,15 @@ export default function SopDetail({
 
   const isVideo = sop.type === "video";
   const totalSeconds = sop.total_seconds;
+
+  // While a translation is in flight, refresh the page every few seconds so
+  // the Spanish fields flip in the moment they're ready. Stops once status is
+  // no longer "pending".
+  useEffect(() => {
+    if (translationStatus !== "pending") return;
+    const id = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(id);
+  }, [translationStatus, router]);
 
   // Auto-scroll active step when video time changes.
   useEffect(() => {
@@ -141,6 +152,17 @@ export default function SopDetail({
 
   return (
     <div className="max-w-[1100px] mx-auto px-7 py-6">
+      {isTranslating && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-primary-bg border border-primary/20 text-[12px] text-primary flex items-center gap-2">
+          <span className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          {t(lang, "translatingSop")}
+        </div>
+      )}
+      {lang === "es" && translationStatus === "failed" && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-danger-bg border border-danger/20 text-[12px] text-danger">
+          {t(lang, "translationFailed")}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <Link href="/procedures" className="text-[13px] text-text-secondary">
           ← {t(lang, "back")}
@@ -207,7 +229,7 @@ export default function SopDetail({
         )}
       </div>
 
-      <div className="grid md:grid-cols-[1fr_340px] gap-6">
+      <div className={`grid md:grid-cols-[1fr_340px] gap-6 transition-opacity ${isTranslating ? "opacity-60" : ""}`}>
         <div>
           {isVideo && sop.file_url ? (
             <video ref={videoRef} controls src={sop.file_url} className="w-full rounded-xl bg-black aspect-video" />

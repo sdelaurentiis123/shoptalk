@@ -39,6 +39,8 @@ export interface Sop {
   recorded_at: string | null;
   transcript: string;
   transcript_es: string;
+  translation_status: "pending" | "ready" | "failed";
+  english_hash: string;
   created_at: string;
   updated_at: string;
 }

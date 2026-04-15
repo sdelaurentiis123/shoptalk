@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -43,15 +44,43 @@ function trimJson(text: string) {
   return text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
 }
 
+function hashEnglish(input: SopIn): string {
+  const h = createHash("sha256");
+  h.update(input.title);
+  h.update("\u0001");
+  h.update(input.description);
+  h.update("\u0001");
+  h.update(input.transcript);
+  for (const s of input.steps) {
+    h.update("\u0002");
+    h.update(s.title);
+    h.update("\u0001");
+    h.update(s.description);
+    for (const ss of s.substeps) {
+      h.update("\u0003");
+      h.update(ss.text);
+    }
+  }
+  return h.digest("hex");
+}
+
 /**
- * Reads the SOP + steps + substeps, asks Claude to translate every English text
- * field to neutral Latin-American Spanish, and writes the `_es` columns back.
- * Idempotent: safe to call multiple times.
+ * Mark a SOP as pending translation. Idempotent; callers invoke right before
+ * kicking off a background `translateSop` to let the UI show a grayed state.
+ */
+export async function markTranslationPending(admin: SupabaseClient, sopId: string) {
+  await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
+}
+
+/**
+ * Reads the SOP + steps + substeps, translates via Claude, writes the `_es`
+ * columns back. Skips entirely if the English hash hasn't changed since the
+ * last successful translation. Sets `translation_status` and `english_hash`.
  */
 export async function translateSop(admin: SupabaseClient, sopId: string): Promise<void> {
   const { data: sop, error } = await admin
     .from("sops")
-    .select("id, title, description, transcript, steps(id, title, description, sort_order, substeps(id, text, sort_order))")
+    .select("id, title, description, transcript, english_hash, translation_status, steps(id, title, description, sort_order, substeps(id, text, sort_order))")
     .eq("id", sopId)
     .maybeSingle();
   if (error || !sop) throw new Error(`translate: sop fetch failed: ${error?.message ?? "not found"}`);
@@ -72,9 +101,18 @@ export async function translateSop(admin: SupabaseClient, sopId: string): Promis
     })),
   };
 
-  if (!input.title && input.steps.length === 0) return;
+  const newHash = hashEnglish(input);
+  if (newHash === sop.english_hash && sop.translation_status === "ready") {
+    return; // nothing changed, nothing to do
+  }
 
-  const system = `You translate manufacturing SOPs from English to neutral Latin-American Spanish for factory-floor operators.
+  if (!input.title && input.steps.length === 0) {
+    await admin.from("sops").update({ translation_status: "ready", english_hash: newHash }).eq("id", sopId);
+    return;
+  }
+
+  try {
+    const system = `You translate manufacturing SOPs from English to neutral Latin-American Spanish for factory-floor operators.
 
 Rules:
 - Translate faithfully. Same meaning, same tone, same structure.
@@ -100,58 +138,62 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
   ]
 }`;
 
-  const userContent = `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}`;
+    const userContent = `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}`;
 
-  const res = await client.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    system,
-    messages: [{ role: "user", content: userContent }],
-  });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      system,
+      messages: [{ role: "user", content: userContent }],
+    });
 
-  const raw = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-  if (!raw) throw new Error("translate: empty Claude response");
+    const raw = res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    if (!raw) throw new Error("empty Claude response");
 
-  let parsed: Translated;
-  try {
-    parsed = JSON.parse(trimJson(raw));
-  } catch (e: any) {
-    throw new Error(`translate: JSON parse failed: ${e.message}\n---\n${raw.slice(0, 500)}`);
-  }
+    const parsed: Translated = JSON.parse(trimJson(raw));
 
-  // Update the SOP row.
-  await admin
-    .from("sops")
-    .update({
-      title_es: parsed.title_es ?? "",
-      description_es: parsed.description_es ?? "",
-      transcript_es: parsed.transcript_es ?? "",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sopId);
-
-  // Index by id for fast lookup.
-  const stepById = new Map(parsed.steps.map((s) => [s.id, s]));
-  const substepById = new Map<string, TranslatedSubstep>();
-  for (const s of parsed.steps) {
-    for (const ss of s.substeps ?? []) substepById.set(ss.id, ss);
-  }
-
-  // Update each step and substep.
-  for (const step of input.steps) {
-    const t = stepById.get(step.id);
-    if (!t) continue;
     await admin
-      .from("steps")
-      .update({ title_es: t.title_es ?? "", description_es: t.description_es ?? "" })
-      .eq("id", step.id);
-    for (const sub of step.substeps) {
-      const ts = substepById.get(sub.id);
-      if (!ts) continue;
-      await admin.from("substeps").update({ text_es: ts.text_es ?? "" }).eq("id", sub.id);
+      .from("sops")
+      .update({
+        title_es: parsed.title_es ?? "",
+        description_es: parsed.description_es ?? "",
+        transcript_es: parsed.transcript_es ?? "",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", sopId);
+
+    const stepById = new Map(parsed.steps.map((s) => [s.id, s]));
+    const substepById = new Map<string, TranslatedSubstep>();
+    for (const s of parsed.steps) {
+      for (const ss of s.substeps ?? []) substepById.set(ss.id, ss);
     }
+
+    for (const step of input.steps) {
+      const t = stepById.get(step.id);
+      if (t) {
+        await admin
+          .from("steps")
+          .update({ title_es: t.title_es ?? "", description_es: t.description_es ?? "" })
+          .eq("id", step.id);
+      }
+      for (const sub of step.substeps) {
+        const ts = substepById.get(sub.id);
+        if (ts) {
+          await admin.from("substeps").update({ text_es: ts.text_es ?? "" }).eq("id", sub.id);
+        }
+      }
+    }
+
+    await admin
+      .from("sops")
+      .update({ translation_status: "ready", english_hash: newHash })
+      .eq("id", sopId);
+  } catch (e) {
+    console.error("[translate] failed:", e);
+    await admin.from("sops").update({ translation_status: "failed" }).eq("id", sopId);
+    throw e;
   }
 }

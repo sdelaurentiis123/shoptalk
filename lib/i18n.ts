@@ -110,6 +110,8 @@ const en = {
   retranslate: "Re-translate to Spanish",
   translating: "Translating…",
   translateDone: "Spanish updated.",
+  translatingSop: "Translating to Spanish — showing English for now.",
+  translationFailed: "Spanish translation failed.",
   publishWithoutCategory: "Publish without category",
   archive: "Archive",
   noStation: "No station",
@@ -166,6 +168,7 @@ const en = {
   // Chat
   askPlaceholder: "Ask about any procedure…",
   send: "Send",
+  newChat: "New chat",
   source: "Source",
   notFound: "I couldn't find that in the procedures. Want to flag this as a documentation gap?",
   reportGap: "Report gap",
@@ -267,6 +270,8 @@ const es: Dict = {
   retranslate: "Re-traducir al español",
   translating: "Traduciendo…",
   translateDone: "Español actualizado.",
+  translatingSop: "Traduciendo al español — mostrando el inglés por ahora.",
+  translationFailed: "Falló la traducción al español.",
   publishWithoutCategory: "Publicar sin categoría",
   archive: "Archivar",
   noStation: "Sin estación",
@@ -318,6 +323,7 @@ const es: Dict = {
 
   askPlaceholder: "Pregunta sobre cualquier procedimiento…",
   send: "Enviar",
+  newChat: "Nuevo chat",
   source: "Fuente",
   notFound: "No encontré eso en los procedimientos. ¿Quieres reportarlo como un vacío?",
   reportGap: "Reportar vacío",

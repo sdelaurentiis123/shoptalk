@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
-import { translateSop } from "@/lib/translate";
+import { translateSop, markTranslationPending } from "@/lib/translate";
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
   const { role, facilityId } = await getAuthContext();
@@ -51,12 +51,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
   await admin.from("sops").update({ updated_at: new Date().toISOString() }).eq("id", params.id);
 
-  // Re-translate now that the English content has changed.
-  try {
-    await translateSop(admin, params.id);
-  } catch (e: any) {
-    console.error("[sops/steps] translate failed:", e?.message ?? e);
-  }
+  // English changed: mark Spanish pending and re-translate in background.
+  await markTranslationPending(admin, params.id);
+  void translateSop(admin, params.id).catch((e) =>
+    console.error("[sops/steps] translate failed:", e?.message ?? e),
+  );
 
   return NextResponse.json({ ok: true });
 }

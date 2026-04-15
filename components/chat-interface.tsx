@@ -25,16 +25,32 @@ export default function ChatInterface({
   lang,
   stations,
   sopTitles,
+  initialMessages = [],
+  initialConversationId = null,
+  initialStationId = null,
 }: {
   lang: LangCode;
   stations: Station[];
   sopTitles: Record<string, string>;
+  initialMessages?: {
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    source_sop_id: string | null;
+    source_step: string | null;
+  }[];
+  initialConversationId?: string | null;
+  initialStationId?: string | null;
 }) {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const hydratedMessages: Msg[] = initialMessages.map((m) => ({
+    ...m,
+    sourceTitle: m.source_sop_id ? sopTitles[m.source_sop_id] ?? null : null,
+  }));
+  const [messages, setMessages] = useState<Msg[]>(hydratedMessages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [stationId, setStationId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
+  const [stationId, setStationId] = useState<string | null>(initialStationId);
   const [pendingFlag, setPendingFlag] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -109,6 +125,18 @@ export default function ChatInterface({
             {s.name}
           </button>
         ))}
+        <div className="flex-1" />
+        <button
+          onClick={() => {
+            setMessages([]);
+            setConversationId(null);
+            setPendingFlag(null);
+          }}
+          disabled={loading || (messages.length === 0 && !conversationId)}
+          className="px-3 py-1 rounded-full text-[12px] border border-border text-text-secondary disabled:opacity-50"
+        >
+          + {t(lang, "newChat")}
+        </button>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-auto px-5 py-6 space-y-4">
