@@ -36,6 +36,8 @@ export default function SopDetail({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [title, setTitle] = useState(sop.title);
+  const [savingTitle, setSavingTitle] = useState(false);
   const translationStatus = sop.translation_status;
   const isTranslating = lang === "es" && translationStatus === "pending";
   const [status, setStatus] = useState(sop.status);
@@ -101,6 +103,28 @@ export default function SopDetail({
       setEditMode(false);
       router.refresh();
     }
+  }
+
+  async function saveTitle() {
+    const trimmed = title.trim();
+    if (!trimmed || trimmed === sop.title) {
+      setTitle(sop.title);
+      return;
+    }
+    setSavingTitle(true);
+    const res = await fetch(`/api/sops/${sop.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: trimmed }),
+    });
+    setSavingTitle(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "save failed");
+      setTitle(sop.title);
+      return;
+    }
+    router.refresh();
   }
 
   async function retranslate() {
@@ -245,7 +269,21 @@ export default function SopDetail({
           )}
 
           <div className="mt-5 mb-2 flex items-baseline gap-2">
-            <h1 className="text-[22px] font-bold tracking-tight2">{pickI18n(sop, "title", lang)}</h1>
+            {editMode && role === "admin" ? (
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={saveTitle}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") setTitle(sop.title);
+                }}
+                disabled={savingTitle}
+                className="flex-1 text-[22px] font-bold tracking-tight2 bg-transparent border-b border-border focus:border-primary outline-none py-0.5 disabled:opacity-60"
+              />
+            ) : (
+              <h1 className="text-[22px] font-bold tracking-tight2">{pickI18n(sop, "title", lang)}</h1>
+            )}
             {status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
             {status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
           </div>

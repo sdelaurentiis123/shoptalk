@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { deleteObject } from "@/lib/r2";
+import { markTranslationPending, translateSop } from "@/lib/translate";
 
 const STATUSES = new Set(["draft", "active", "archived"]);
 
@@ -24,6 +25,14 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     } else {
       patch.station_id = String(sid);
     }
+  }
+  let titleChanged = false;
+  if ("title" in (body ?? {})) {
+    const title = String(body.title ?? "").trim();
+    if (!title) return NextResponse.json({ error: "title empty" }, { status: 400 });
+    if (title.length > 200) return NextResponse.json({ error: "title too long" }, { status: 400 });
+    patch.title = title;
+    titleChanged = true;
   }
   if (Object.keys(patch).length === 0) return NextResponse.json({ error: "nothing to update" }, { status: 400 });
 
@@ -52,6 +61,15 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   patch.updated_at = new Date().toISOString();
   const { data, error } = await admin.from("sops").update(patch).eq("id", params.id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // English title changed → Spanish needs to catch up.
+  if (titleChanged) {
+    await markTranslationPending(admin, params.id);
+    void translateSop(admin, params.id).catch((e) =>
+      console.error("[sops/put] translate failed:", e?.message ?? e),
+    );
+  }
+
   return NextResponse.json({ ok: true, sop: data });
 }
 
