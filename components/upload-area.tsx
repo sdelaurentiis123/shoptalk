@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { LangCode } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 const MAX_PARALLEL = 3;
 const MAX_PART_RETRIES = 3;
@@ -60,11 +62,12 @@ async function putPartWithRetry(
 export default function UploadArea({
   facilityId,
   stationId,
+  lang,
 }: {
   facilityId: string;
   stationId?: string | null;
+  lang: LangCode;
 }) {
-  // facilityId unused on the client now (server derives it), but kept for API symmetry.
   void facilityId;
   const fileRef = useRef<HTMLInputElement>(null);
   const [processing, setProcessing] = useState(false);
@@ -82,14 +85,14 @@ export default function UploadArea({
     const isPdf = file.type === "application/pdf";
     const isImg = file.type.startsWith("image/");
     if (!isVideo && !isPdf && !isImg) {
-      setError("Please upload a video, PDF, or image file.");
+      setError(t(lang, "invalidFileType"));
       return;
     }
     setProcessing(true);
     setError("");
     setProgress(0);
     setSpeed("");
-    setStatus(`Preparing upload (${(file.size / 1024 / 1024).toFixed(1)} MB)…`);
+    setStatus(t(lang, "preparingUpload", { mb: (file.size / 1024 / 1024).toFixed(1) }));
     abortRef.current = new AbortController();
 
     try {
@@ -104,7 +107,7 @@ export default function UploadArea({
       const { key, upload_id, part_size, parts } = start as StartResp;
 
       // 2. Upload parts in parallel, max MAX_PARALLEL at a time.
-      setStatus(`Uploading 0 / ${parts.length} parts…`);
+      setStatus(t(lang, "uploadingParts", { done: 0, total: parts.length }));
       const totalBytes = file.size;
       let uploadedBytes = 0;
       const startTs = Date.now();
@@ -135,7 +138,7 @@ export default function UploadArea({
           const etag = await putPartWithRetry(p.url, slice, onBytes, abortRef.current?.signal);
           etags[i] = { partNumber: p.partNumber, etag };
           done++;
-          setStatus(`Uploading ${done} / ${parts.length} parts…`);
+          setStatus(t(lang, "uploadingParts", { done, total: parts.length }));
         }
       }
 
@@ -152,7 +155,7 @@ export default function UploadArea({
       }
 
       // 3. Complete.
-      setStatus("Finalizing upload…");
+      setStatus(t(lang, "finalizingUpload"));
       setProgress(75);
       const compRes = await fetch("/api/uploads/complete", {
         method: "POST",
@@ -165,7 +168,7 @@ export default function UploadArea({
       // 4. Kick off Gemini processing.
       setProgress(85);
       setSpeed("");
-      setStatus(isVideo ? "Analyzing audio + video with Gemini…" : "Analyzing document with Gemini…");
+      setStatus(isVideo ? t(lang, "analyzingVideo") : t(lang, "analyzingDoc"));
       const procRes = await fetch("/api/process-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -217,16 +220,14 @@ export default function UploadArea({
       {!processing ? (
         <div className="flex justify-between items-center">
           <div>
-            <div className="text-[15px] font-semibold">Upload procedures</div>
-            <div className="text-[13px] text-text-secondary mt-[3px]">
-              Drop video, PDF, or image files — Gemini will extract steps automatically.
-            </div>
+            <div className="text-[15px] font-semibold">{t(lang, "upload")}</div>
+            <div className="text-[13px] text-text-secondary mt-[3px]">{t(lang, "uploadHint")}</div>
           </div>
           <button
             onClick={() => fileRef.current?.click()}
             className="bg-primary text-white rounded-full px-[22px] py-[9px] font-medium text-[13px]"
           >
-            Choose files
+            {t(lang, "chooseFiles")}
           </button>
         </div>
       ) : (
@@ -235,14 +236,14 @@ export default function UploadArea({
           <div className="flex-1">
             <div className="text-[14px] font-medium">{status}</div>
             <div className="text-[12px] text-text-tertiary mt-0.5 tabular-nums">
-              {progress}%{speed ? ` · ${speed}` : ""} · This may take a moment for longer videos.
+              {progress}%{speed ? ` · ${speed}` : ""} · {t(lang, "uploadTakesTime")}
             </div>
             <div className="h-1 bg-background rounded-full mt-2 overflow-hidden">
               <div className="h-full bg-primary transition-all duration-500" style={{ width: `${Math.max(progress, 4)}%` }} />
             </div>
           </div>
           <button onClick={cancel} className="text-[12px] text-text-tertiary hover:text-danger">
-            Cancel
+            {t(lang, "cancel")}
           </button>
         </div>
       )}

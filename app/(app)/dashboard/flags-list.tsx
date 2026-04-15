@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { Flag } from "@/lib/types";
+import type { Flag, LangCode } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 type FlagWithSop = Flag & { sops?: { title: string } | null };
 
-export default function FlagsList({ flags: initial }: { flags: FlagWithSop[] }) {
+export default function FlagsList({ flags: initial, lang }: { flags: FlagWithSop[]; lang: LangCode }) {
   const [flags, setFlags] = useState(initial);
 
   async function update(id: string, status: "resolved" | "dismissed") {
@@ -22,7 +23,7 @@ export default function FlagsList({ flags: initial }: { flags: FlagWithSop[] }) 
   const closed = flags.filter((f) => f.status !== "open");
 
   if (flags.length === 0) {
-    return <div className="bg-surface border border-border rounded-xl p-6 text-center text-[13px] text-text-tertiary">No gaps reported.</div>;
+    return <div className="bg-surface border border-border rounded-xl p-6 text-center text-[13px] text-text-tertiary">{t(lang, "noGaps")}</div>;
   }
 
   return (
@@ -40,17 +41,17 @@ export default function FlagsList({ flags: initial }: { flags: FlagWithSop[] }) 
                         {f.sops.title}
                       </Link>
                     ) : (
-                      "No procedure linked"
+                      t(lang, "noProcedureLinked")
                     )}{" "}
-                    · {new Date(f.created_at).toLocaleString()}
+                    · {new Date(f.created_at).toLocaleString(lang === "es" ? "es-ES" : "en-US")}
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => update(f.id, "resolved")} className="px-3 py-1 rounded-full bg-success-bg text-success text-[12px] font-medium">
-                    Resolve
+                    {t(lang, "resolve")}
                   </button>
                   <button onClick={() => update(f.id, "dismissed")} className="px-3 py-1 rounded-full border border-border text-[12px]">
-                    Dismiss
+                    {t(lang, "dismiss")}
                   </button>
                 </div>
               </div>
@@ -60,7 +61,7 @@ export default function FlagsList({ flags: initial }: { flags: FlagWithSop[] }) 
       )}
       {closed.length > 0 && (
         <details>
-          <summary className="text-[13px] text-text-secondary cursor-pointer">Closed ({closed.length})</summary>
+          <summary className="text-[13px] text-text-secondary cursor-pointer">{t(lang, "closed")} ({closed.length})</summary>
           <div className="mt-2 bg-surface border border-border rounded-xl overflow-hidden">
             {closed.map((f) => (
               <div key={f.id} className="px-5 py-3 border-b border-border last:border-0 text-[13px] text-text-secondary">

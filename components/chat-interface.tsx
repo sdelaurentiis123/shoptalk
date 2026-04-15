@@ -82,21 +82,21 @@ export default function ChatInterface({
     });
     setMessages((prev) => [
       ...prev,
-      { id: `f-${Date.now()}`, role: "assistant", content: lang === "es" ? "Reportado. Gracias." : "Flagged. Thanks." },
+      { id: `f-${Date.now()}`, role: "assistant", content: t(lang, "flagged") },
     ]);
   }
 
   return (
     <div className="max-w-[780px] mx-auto h-[calc(100vh-52px)] flex flex-col">
       <div className="px-5 py-3 border-b border-border flex items-center gap-2 flex-wrap">
-        <span className="text-[12px] text-text-tertiary">Station</span>
+        <span className="text-[12px] text-text-tertiary">{t(lang, "stationLabel")}</span>
         <button
           onClick={() => setStationId(null)}
           className={`px-3 py-1 rounded-full text-[12px] ${
             stationId === null ? "bg-text-primary text-white" : "border border-border text-text-secondary"
           }`}
         >
-          All
+          {t(lang, "allStations")}
         </button>
         {stations.map((s) => (
           <button

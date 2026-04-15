@@ -4,7 +4,7 @@ import { getAuthContext } from "@/lib/auth";
 import LibraryView from "@/components/library-view";
 
 export default async function ProceduresPage() {
-  const { role, facilityId } = await getAuthContext();
+  const { role, facilityId, language } = await getAuthContext();
   if (!role || !facilityId) redirect("/login");
 
   const supabase = createClient();
@@ -14,5 +14,5 @@ export default async function ProceduresPage() {
   ]);
 
   const sopList = (sops ?? []).map((s: any) => ({ ...s, stepCount: s.steps?.length ?? 0 }));
-  return <LibraryView sops={sopList} stations={stations ?? []} role={role} facilityId={facilityId} />;
+  return <LibraryView sops={sopList} stations={stations ?? []} role={role} facilityId={facilityId} lang={language} />;
 }

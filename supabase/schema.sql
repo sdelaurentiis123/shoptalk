@@ -32,6 +32,9 @@ create table if not exists sops (
   trainer text default '',
   recorded_at timestamptz,
   transcript text default '',
+  title_es text default '',
+  description_es text default '',
+  transcript_es text default '',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -42,6 +45,8 @@ create table if not exists steps (
   sort_order integer not null,
   title text not null,
   description text default '',
+  title_es text default '',
+  description_es text default '',
   start_sec integer,
   end_sec integer,
   created_at timestamptz default now(),
@@ -53,6 +58,7 @@ create table if not exists substeps (
   step_id uuid references steps(id) on delete cascade not null,
   sort_order integer not null,
   text text not null,
+  text_es text default '',
   time_sec integer,
   created_at timestamptz default now()
 );

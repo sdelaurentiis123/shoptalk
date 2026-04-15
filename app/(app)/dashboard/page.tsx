@@ -1,11 +1,11 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthContext } from "@/lib/auth";
+import { t } from "@/lib/i18n";
 import FlagsList from "./flags-list";
 
 export default async function Dashboard() {
-  const { role, facilityId } = await getAuthContext();
+  const { role, facilityId, language } = await getAuthContext();
   if (role !== "admin" || !facilityId) redirect("/login");
   const supabase = createClient();
   const [{ data: facility }, { data: sops }, { data: ops }, { data: flags }] = await Promise.all([
@@ -20,22 +20,19 @@ export default async function Dashboard() {
 
   return (
     <div className="max-w-[960px] mx-auto px-7 py-8">
-      <h1 className="text-2xl font-bold tracking-tight2 mb-6">Dashboard</h1>
+      <h1 className="text-2xl font-bold tracking-tight2 mb-6">{t(language, "dashboardTitle")}</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-        <Stat label="Join code" value={facility?.join_code ?? "—"} mono />
-        <Stat label="Active SOPs" value={String(activeSops)} />
-        <Stat label="Drafts" value={String(draftSops)} />
-        <Stat label="Operators" value={String((ops ?? []).length)} />
+        <Stat label={t(language, "joinCode")} value={facility?.join_code ?? "—"} mono />
+        <Stat label={t(language, "activeSops")} value={String(activeSops)} />
+        <Stat label={t(language, "drafts")} value={String(draftSops)} />
+        <Stat label={t(language, "operators")} value={String((ops ?? []).length)} />
       </div>
 
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="text-[17px] font-semibold">Documentation gaps</h2>
-        <Link href="/settings" className="text-[13px] text-primary">
-          Settings
-        </Link>
+        <h2 className="text-[17px] font-semibold">{t(language, "docGaps")}</h2>
       </div>
-      <FlagsList flags={(flags ?? []) as any} />
+      <FlagsList flags={(flags ?? []) as any} lang={language} />
     </div>
   );
 }

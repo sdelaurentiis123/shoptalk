@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { SopWithSteps, StepWithSubsteps, Role, Station } from "@/lib/types";
+import type { SopWithSteps, StepWithSubsteps, Role, Station, LangCode } from "@/lib/types";
 import { fmtTime } from "@/lib/utils";
+import { t } from "@/lib/i18n";
+import { pickI18n } from "@/lib/sop-i18n";
 import EditStepModal from "./edit-step-modal";
 import PublishSopModal from "./publish-sop-modal";
 
@@ -12,10 +14,12 @@ export default function SopDetail({
   sop,
   role,
   stations: initialStations,
+  lang,
 }: {
   sop: SopWithSteps;
   role: Role;
   stations: Station[];
+  lang: LangCode;
 }) {
   const [stations, setStations] = useState<Station[]>(initialStations);
   const [stationId, setStationId] = useState<string | null>(sop.station_id);
@@ -110,7 +114,7 @@ export default function SopDetail({
     <div className="max-w-[1100px] mx-auto px-7 py-6">
       <div className="flex items-center justify-between mb-4">
         <Link href="/procedures" className="text-[13px] text-text-secondary">
-          ← Back
+          ← {t(lang, "back")}
         </Link>
         {role === "admin" && (
           <div className="flex gap-2">
@@ -119,7 +123,7 @@ export default function SopDetail({
                 onClick={() => setPublishModal("publish")}
                 className="px-4 py-[7px] rounded-full bg-success text-white text-[13px] font-medium"
               >
-                Publish
+                {t(lang, "publish")}
               </button>
             )}
             {status === "active" && (
@@ -128,13 +132,13 @@ export default function SopDetail({
                   onClick={() => setPublishModal("recategorize")}
                   className="px-4 py-[7px] rounded-full border border-border text-[13px]"
                 >
-                  {stations.find((s) => s.id === stationId)?.name ?? "No station"}
+                  {stations.find((s) => s.id === stationId)?.name ?? t(lang, "noStation")}
                 </button>
                 <button
                   onClick={() => setSopStatus("archived")}
                   className="px-4 py-[7px] rounded-full border border-border text-[13px]"
                 >
-                  Archive
+                  {t(lang, "archive")}
                 </button>
               </>
             )}
@@ -144,11 +148,11 @@ export default function SopDetail({
                 editMode ? "bg-text-primary text-white" : "border border-border"
               }`}
             >
-              {editMode ? "Exit edit" : "Edit"}
+              {editMode ? t(lang, "exitEdit") : t(lang, "edit")}
             </button>
             {editMode && (
               <button onClick={save} disabled={saving} className="px-4 py-[7px] rounded-full bg-primary text-white text-[13px] font-medium">
-                {saving ? "Saving…" : "Save"}
+                {saving ? t(lang, "saving") : t(lang, "save")}
               </button>
             )}
           </div>
@@ -166,38 +170,38 @@ export default function SopDetail({
             <img src={sop.file_url} alt={sop.title} className="w-full rounded-xl" />
           ) : (
             <div className="bg-surface border border-border rounded-xl p-10 text-center text-text-tertiary">
-              No file attached.
+              {t(lang, "noFile")}
             </div>
           )}
 
           <div className="mt-5 mb-2 flex items-baseline gap-2">
-            <h1 className="text-[22px] font-bold tracking-tight2">{sop.title}</h1>
-            {status === "draft" && <span className="text-[11px] font-medium text-warning">Draft</span>}
-            {status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">Archived</span>}
+            <h1 className="text-[22px] font-bold tracking-tight2">{pickI18n(sop, "title", lang)}</h1>
+            {status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
+            {status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
           </div>
           <div className="text-[12px] text-text-tertiary mb-1">
             {[
-              sop.trainer ? `Trainer: ${sop.trainer}` : "Trainer: Unknown",
-              sop.recorded_at ? `Recorded ${new Date(sop.recorded_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : null,
+              sop.trainer ? `${t(lang, "trainer")}: ${sop.trainer}` : null,
+              sop.recorded_at ? `${t(lang, "recorded")} ${new Date(sop.recorded_at).toLocaleDateString(lang === "es" ? "es-ES" : "en-US", { month: "short", day: "numeric", year: "numeric" })}` : null,
             ]
               .filter(Boolean)
               .join(" · ")}
           </div>
-          {sop.description && (
-            <p className="text-[13px] text-text-secondary mb-4">{sop.description}</p>
+          {pickI18n(sop, "description", lang) && (
+            <p className="text-[13px] text-text-secondary mb-4">{pickI18n(sop, "description", lang)}</p>
           )}
 
           {steps[activeStep] && (
             <div className="rounded-xl border border-primary/30 bg-primary-bg p-5 mt-4">
               <div className="text-[11px] font-semibold tracking-wider uppercase text-primary mb-2">
-                Currently Playing · Step {activeStep + 1}
+                {t(lang, "currentlyPlaying")} · {t(lang, "step")} {activeStep + 1}
               </div>
               <div className="text-[20px] font-semibold tracking-tight2 leading-snug mb-1">
-                {steps[activeStep].title}
+                {pickI18n(steps[activeStep], "title", lang)}
               </div>
-              {steps[activeStep].description && (
+              {pickI18n(steps[activeStep], "description", lang) && (
                 <p className="text-[13px] text-text-secondary leading-relaxed mb-3">
-                  {steps[activeStep].description}
+                  {pickI18n(steps[activeStep], "description", lang)}
                 </p>
               )}
               {steps[activeStep].substeps.length > 0 && (
@@ -207,7 +211,7 @@ export default function SopDetail({
                       <span className="text-primary font-semibold w-4 flex-shrink-0">
                         {String.fromCharCode(97 + j)}.
                       </span>
-                      <span className="flex-1 leading-relaxed">{ss.text}</span>
+                      <span className="flex-1 leading-relaxed">{pickI18n(ss, "text", lang)}</span>
                       {isVideo && ss.time_sec != null && (
                         <button
                           onClick={() => jumpTo(ss.time_sec!)}
@@ -225,7 +229,7 @@ export default function SopDetail({
         </div>
 
         <div className="bg-surface border border-border rounded-xl p-4 max-h-[75vh] overflow-auto">
-          <div className="text-[13px] font-semibold mb-3 text-text-secondary uppercase tracking-wide">Steps</div>
+          <div className="text-[13px] font-semibold mb-3 text-text-secondary uppercase tracking-wide">{t(lang, "steps")}</div>
           {steps.map((st, i) => (
             <div
               id={`step-${i + 1}`}
@@ -241,9 +245,9 @@ export default function SopDetail({
               <div className="flex justify-between items-start gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-[14px] font-semibold leading-snug">
-                    {i + 1}. {st.title}
+                    {i + 1}. {pickI18n(st, "title", lang)}
                   </div>
-                  <div className="text-[12px] text-text-secondary mt-0.5 leading-snug">{st.description}</div>
+                  <div className="text-[12px] text-text-secondary mt-0.5 leading-snug">{pickI18n(st, "description", lang)}</div>
                   {isVideo && st.start_sec != null && (
                     <div className="text-[11px] text-text-tertiary tabular-nums mt-1">
                       {fmtTime(st.start_sec)} – {fmtTime(st.end_sec)}
@@ -261,7 +265,7 @@ export default function SopDetail({
                           }}
                         >
                           <span className="absolute left-0 text-primary font-semibold">{String.fromCharCode(97 + j)}.</span>
-                          {ss.text}
+                          {pickI18n(ss, "text", lang)}
                         </li>
                       ))}
                     </ul>
@@ -275,7 +279,7 @@ export default function SopDetail({
                       onClick={(e) => { e.stopPropagation(); setEditing({ step: st, index: i }); }}
                       className="text-primary text-[11px] font-medium"
                     >
-                      Edit
+                      {t(lang, "edit")}
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); setSteps(steps.filter((_, k) => k !== i)); }}
@@ -297,8 +301,10 @@ export default function SopDetail({
                     id: `tmp-${Math.random()}`,
                     sop_id: sop.id,
                     sort_order: steps.length,
-                    title: "New step",
+                    title: t(lang, "newStep"),
+                    title_es: "",
                     description: "",
+                    description_es: "",
                     start_sec: isVideo ? Math.round(currentTime) : null,
                     end_sec: isVideo ? Math.min(Math.round(currentTime) + 15, totalSeconds) : null,
                     substeps: [],
@@ -307,7 +313,7 @@ export default function SopDetail({
               }
               className="w-full mt-2 py-2 rounded-lg border border-dashed border-border text-[13px] text-primary font-medium"
             >
-              + Add step
+              {t(lang, "addStep")}
             </button>
           )}
         </div>
@@ -320,6 +326,7 @@ export default function SopDetail({
           totalSeconds={totalSeconds}
           isVideo={isVideo}
           currentVideoSec={currentTime}
+          lang={lang}
           onSave={(updated) => {
             const next = [...steps];
             next[editing.index] = updated;
@@ -333,10 +340,11 @@ export default function SopDetail({
       {publishModal && (
         <PublishSopModal
           sopId={sop.id}
-          sopTitle={sop.title}
+          sopTitle={pickI18n(sop, "title", lang)}
           currentStationId={stationId}
           stations={stations}
           mode={publishModal}
+          lang={lang}
           onClose={() => setPublishModal(null)}
           onDone={(nextStationId, newStations) => {
             if (newStations) setStations(newStations);

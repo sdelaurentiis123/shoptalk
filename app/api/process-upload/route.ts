@@ -75,13 +75,16 @@ export async function POST(req: Request) {
         facility_id: facilityId,
         station_id,
         title: gemini.title || file_name.replace(/\.[^.]+$/, ""),
+        title_es: gemini.title_es ?? "",
         description: gemini.description || "",
+        description_es: gemini.description_es ?? "",
         type: sopType,
         status: "draft",
         file_path: storage_path,
         file_url: signed_url,
         total_seconds: sopType === "video" ? (gemini.totalSeconds || 0) : 0,
         transcript: gemini.transcript ?? "",
+        transcript_es: gemini.transcript_es ?? "",
         recorded_at: new Date().toISOString(),
       })
       .select()
@@ -97,7 +100,9 @@ export async function POST(req: Request) {
           sop_id: sop.id,
           sort_order: i,
           title: s.title,
+          title_es: s.title_es ?? "",
           description: s.description || "",
+          description_es: s.description_es ?? "",
           start_sec: sopType === "video" ? s.startSeconds ?? null : null,
           end_sec: sopType === "video" ? s.endSeconds ?? null : null,
         })
@@ -111,6 +116,7 @@ export async function POST(req: Request) {
         step_id: step.id,
         sort_order: j,
         text: ss.text,
+        text_es: ss.text_es ?? "",
         time_sec: sopType === "video" ? ss.timeSeconds ?? null : null,
       }));
       if (subs.length) {

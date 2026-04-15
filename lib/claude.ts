@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { LangCode, SopWithSteps, Message } from "./types";
 import { LANG_NAME } from "./i18n";
+import { pickI18n } from "./sop-i18n";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const MODEL = "claude-sonnet-4-5";
@@ -13,7 +14,7 @@ export interface ChatResult {
 
 const TRANSCRIPT_CHAR_BUDGET = 8000;
 
-function buildSopContext(sops: SopWithSteps[]): string {
+function buildSopContext(sops: SopWithSteps[], lang: LangCode): string {
   if (sops.length === 0) return "(no procedures uploaded yet)";
   return sops
     .map((sop) => {
@@ -22,19 +23,19 @@ function buildSopContext(sops: SopWithSteps[]): string {
         .map((st, i) => {
           const subs = st.substeps
             .sort((a, b) => a.sort_order - b.sort_order)
-            .map((ss) => `    - ${ss.text}`)
+            .map((ss) => `    - ${pickI18n(ss, "text", lang)}`)
             .join("\n");
-          const t = st.start_sec != null ? ` [${st.start_sec}s–${st.end_sec}s]` : "";
-          return `  Step ${i + 1}: ${st.title}${t}\n    ${st.description}${subs ? "\n" + subs : ""}`;
+          const tt = st.start_sec != null ? ` [${st.start_sec}s–${st.end_sec}s]` : "";
+          return `  Step ${i + 1}: ${pickI18n(st, "title", lang)}${tt}\n    ${pickI18n(st, "description", lang)}${subs ? "\n" + subs : ""}`;
         })
         .join("\n");
-      const transcript = (sop.transcript ?? "").slice(0, TRANSCRIPT_CHAR_BUDGET);
-      const transcriptSection = transcript
-        ? `\n\nTRANSCRIPT (play-by-play of the video, use for detail/nuance questions):\n${transcript}${
-            (sop.transcript?.length ?? 0) > TRANSCRIPT_CHAR_BUDGET ? "\n…(truncated)" : ""
+      const transcriptText = pickI18n(sop, "transcript", lang).slice(0, TRANSCRIPT_CHAR_BUDGET);
+      const transcriptSection = transcriptText
+        ? `\n\nTRANSCRIPT (play-by-play of the video, use for detail/nuance questions):\n${transcriptText}${
+            pickI18n(sop, "transcript", lang).length > TRANSCRIPT_CHAR_BUDGET ? "\n…(truncated)" : ""
           }`
         : "";
-      return `### PROCEDURE: ${sop.title} (id: ${sop.id})\n${sop.description}\n\nSTEPS:\n${stepsTxt}${transcriptSection}`;
+      return `### PROCEDURE: ${pickI18n(sop, "title", lang)} (id: ${sop.id})\n${pickI18n(sop, "description", lang)}\n\nSTEPS:\n${stepsTxt}${transcriptSection}`;
     })
     .join("\n\n");
 }
@@ -65,7 +66,7 @@ At the end of every answer, on a new line, output exactly one of:
 If the information is not in the procedures, use [NOT_FOUND] and, in your reply, ask if they want to flag this as a documentation gap.
 
 Procedures:
-${buildSopContext(sops)}`;
+${buildSopContext(sops, language)}`;
 
   const res = await client.messages.create({
     model: MODEL,

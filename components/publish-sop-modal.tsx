@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Station } from "@/lib/types";
+import type { Station, LangCode } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 export default function PublishSopModal({
   sopId,
@@ -9,6 +10,7 @@ export default function PublishSopModal({
   currentStationId,
   stations,
   mode,
+  lang,
   onClose,
   onDone,
 }: {
@@ -17,6 +19,7 @@ export default function PublishSopModal({
   currentStationId: string | null;
   stations: Station[];
   mode: "publish" | "recategorize";
+  lang: LangCode;
   onClose: () => void;
   onDone: (nextStationId: string | null, newStations?: Station[]) => void;
 }) {
@@ -93,7 +96,7 @@ export default function PublishSopModal({
         <div className="flex justify-between items-start mb-4">
           <div>
             <div className="text-[11px] font-semibold tracking-wider uppercase text-text-tertiary mb-1">
-              {mode === "publish" ? "Publish procedure" : "Change station"}
+              {mode === "publish" ? t(lang, "publishProcedure") : t(lang, "changeStation")}
             </div>
             <div className="text-[17px] font-semibold">{sopTitle}</div>
           </div>
@@ -106,20 +109,20 @@ export default function PublishSopModal({
         </div>
 
         <label className="block text-[13px] font-medium text-text-secondary mb-2">
-          Station {mode === "publish" ? "(optional)" : ""}
+          {mode === "publish" ? t(lang, "stationOptional") : t(lang, "station")}
         </label>
         <select
           value={stationId}
           onChange={(e) => setStationId(e.target.value as any)}
           className="w-full px-3 py-2.5 border border-border rounded-lg text-[14px] outline-none bg-surface mb-3"
         >
-          <option value="">— No station —</option>
+          <option value="">{t(lang, "noStationOption")}</option>
           {stations.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
           ))}
-          <option value="__new__">+ Create new station…</option>
+          <option value="__new__">{t(lang, "createNewStation")}</option>
         </select>
 
         {stationId === "__new__" && (
@@ -127,7 +130,7 @@ export default function PublishSopModal({
             autoFocus
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Station name"
+            placeholder={t(lang, "stationName")}
             className="w-full px-3 py-2.5 border border-border rounded-lg text-[14px] outline-none mb-3"
           />
         )}
@@ -140,7 +143,7 @@ export default function PublishSopModal({
             disabled={saving}
             className="w-full py-2.5 rounded-full bg-primary text-white text-[14px] font-medium disabled:opacity-60"
           >
-            {saving ? "Saving…" : mode === "publish" ? "Publish" : "Save"}
+            {saving ? t(lang, "saving") : mode === "publish" ? t(lang, "publish") : t(lang, "save")}
           </button>
           {mode === "publish" && (
             <button
@@ -148,7 +151,7 @@ export default function PublishSopModal({
               disabled={saving}
               className="w-full py-2.5 rounded-full border border-border text-[13px] text-text-secondary"
             >
-              Publish without category
+              {t(lang, "publishWithoutCategory")}
             </button>
           )}
         </div>

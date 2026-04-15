@@ -1,19 +1,22 @@
 "use client";
 
-import type { Station } from "@/lib/types";
+import type { Station, LangCode } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 export default function StationFilter({
   stations,
   active,
   onChange,
   counts,
+  lang,
 }: {
   stations: Station[];
   active: string | "all";
   onChange: (id: string | "all") => void;
   counts: Record<string, number>;
+  lang: LangCode;
 }) {
-  const all = [{ id: "all", name: "All" } as const, ...stations];
+  const all = [{ id: "all" as const, name: t(lang, "allStations") }, ...stations];
   return (
     <div className="flex gap-1.5 mb-6 flex-wrap">
       {all.map((s) => {

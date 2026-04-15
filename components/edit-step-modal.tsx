@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Filmstrip from "./filmstrip";
 import { fmtTime } from "@/lib/utils";
-import type { StepWithSubsteps } from "@/lib/types";
+import type { StepWithSubsteps, LangCode } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 export default function EditStepModal({
   step,
@@ -11,6 +12,7 @@ export default function EditStepModal({
   totalSeconds,
   isVideo,
   currentVideoSec,
+  lang,
   onSave,
   onClose,
 }: {
@@ -19,6 +21,7 @@ export default function EditStepModal({
   totalSeconds: number;
   isVideo: boolean;
   currentVideoSec: number;
+  lang: LangCode;
   onSave: (s: StepWithSubsteps) => void;
   onClose: () => void;
 }) {
@@ -36,7 +39,7 @@ export default function EditStepModal({
       <div onClick={onClose} className="absolute inset-0 bg-black/25 backdrop-blur-sm" />
       <div className="relative bg-surface rounded-2xl w-[520px] max-h-[85vh] overflow-auto shadow-cardlg p-7 px-8">
         <div className="flex justify-between items-center mb-6">
-          <span className="text-[17px] font-semibold">Edit Step {stepIndex + 1}</span>
+          <span className="text-[17px] font-semibold">{t(lang, "editStep")} {stepIndex + 1}</span>
           <button
             onClick={onClose}
             className="bg-background w-7 h-7 rounded-full text-[15px] text-text-secondary flex items-center justify-center"
@@ -45,14 +48,14 @@ export default function EditStepModal({
           </button>
         </div>
 
-        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Title</label>
+        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{t(lang, "title")}</label>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           className="w-full px-3 py-2.5 border border-border rounded-lg text-[14px] outline-none bg-surface mb-5"
         />
 
-        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Description</label>
+        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{t(lang, "descriptionField")}</label>
         <textarea
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
@@ -62,16 +65,16 @@ export default function EditStepModal({
 
         {isVideo && totalSeconds > 0 && (
           <div className="mb-6">
-            <label className="block text-[13px] font-medium text-text-secondary mb-3">Video Clip Range</label>
+            <label className="block text-[13px] font-medium text-text-secondary mb-3">{t(lang, "videoClipRange")}</label>
             <div className="bg-background rounded-xl px-5 py-4">
               <div className="flex justify-between items-center mb-3">
-                <span className="text-[13px] font-medium">Clip Range</span>
-                <span className="text-[12px] text-text-tertiary">{fmtTime(clipDur)} clip</span>
+                <span className="text-[13px] font-medium">{t(lang, "clipRange")}</span>
+                <span className="text-[12px] text-text-tertiary">{fmtTime(clipDur)} {t(lang, "clip")}</span>
               </div>
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-[14px] font-semibold text-primary tabular-nums">{fmtTime(startSec)}</span>
                 <div className="flex-1 h-px bg-border" />
-                <span className="text-[12px] text-text-tertiary">to</span>
+                <span className="text-[12px] text-text-tertiary">{t(lang, "to")}</span>
                 <div className="flex-1 h-px bg-border" />
                 <span className="text-[14px] font-semibold text-primary tabular-nums">{fmtTime(endSec)}</span>
               </div>
@@ -85,7 +88,7 @@ export default function EditStepModal({
                 }}
               />
               <div className="flex items-center gap-2 mt-3">
-                <span className="text-[12px] text-text-tertiary">Quick</span>
+                <span className="text-[12px] text-text-tertiary">{t(lang, "quick")}</span>
                 {[15, 30, 45, 60].map((d) => (
                   <button
                     key={d}
@@ -104,12 +107,12 @@ export default function EditStepModal({
 
         <div className="mb-6">
           <div className="flex justify-between items-center mb-3">
-            <label className="text-[13px] font-medium text-text-secondary">Sub-steps</label>
+            <label className="text-[13px] font-medium text-text-secondary">{t(lang, "subSteps")}</label>
             <button
-              onClick={() => setSubsteps([...substeps, { id: `tmp-${Math.random()}`, step_id: step.id, sort_order: substeps.length, text: "", time_sec: isVideo ? startSec : null }])}
+              onClick={() => setSubsteps([...substeps, { id: `tmp-${Math.random()}`, step_id: step.id, sort_order: substeps.length, text: "", text_es: "", time_sec: isVideo ? startSec : null }])}
               className="text-[13px] text-primary font-medium"
             >
-              + Add
+              {t(lang, "addSubstep")}
             </button>
           </div>
           {substeps.map((sub, i) => (
@@ -139,7 +142,7 @@ export default function EditStepModal({
                       }}
                       className="w-12 px-1.5 py-1 border border-border rounded text-[12px] text-center"
                     />
-                    <span className="text-[11px] text-text-tertiary">seconds</span>
+                    <span className="text-[11px] text-text-tertiary">{t(lang, "seconds")}</span>
                     <button
                       onClick={() => {
                         const n = [...substeps];
@@ -148,7 +151,7 @@ export default function EditStepModal({
                       }}
                       className="px-2.5 py-[3px] bg-primary text-white rounded text-[11px] font-medium"
                     >
-                      Set from video
+                      {t(lang, "setFromVideo")}
                     </button>
                     {sub.time_sec != null && (
                       <span className="text-[11px] text-text-tertiary">({fmtTime(sub.time_sec)})</span>
@@ -171,7 +174,7 @@ export default function EditStepModal({
             onClick={onClose}
             className="px-5 py-2 rounded-lg border border-border bg-surface text-[14px] font-medium"
           >
-            Cancel
+            {t(lang, "cancel")}
           </button>
           <button
             onClick={() =>
@@ -186,7 +189,7 @@ export default function EditStepModal({
             }
             className="px-5 py-2 rounded-lg bg-primary text-white text-[14px] font-medium"
           >
-            Done
+            {t(lang, "done")}
           </button>
         </div>
       </div>

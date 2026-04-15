@@ -29,7 +29,9 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
         sop_id: params.id,
         sort_order: s.sort_order,
         title: s.title,
+        title_es: "",
         description: s.description ?? "",
+        description_es: "",
         start_sec: s.start_sec,
         end_sec: s.end_sec,
       })
@@ -40,6 +42,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       step_id: step.id,
       sort_order: ss.sort_order,
       text: ss.text,
+      text_es: "",
       time_sec: ss.time_sec,
     }));
     if (subs.length) await admin.from("substeps").insert(subs);

@@ -2,21 +2,25 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { Sop, Station } from "@/lib/types";
+import type { Sop, Station, LangCode } from "@/lib/types";
 import { fmtTime } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 import StationFilter from "./station-filter";
 import UploadArea from "./upload-area";
+import { pickI18n } from "@/lib/sop-i18n";
 
 export default function LibraryView({
   sops,
   stations,
   role,
   facilityId,
+  lang,
 }: {
   sops: (Sop & { stepCount: number })[];
   stations: Station[];
   role: "admin" | "operator";
   facilityId: string;
+  lang: LangCode;
 }) {
   const [station, setStation] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
@@ -24,11 +28,11 @@ export default function LibraryView({
   const filtered = useMemo(() => {
     return sops.filter((s) => {
       if (station !== "all" && s.station_id !== station) return false;
-      if (search && !s.title.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search && !pickI18n(s, "title", lang).toLowerCase().includes(search.toLowerCase())) return false;
       if (role === "operator" && s.status !== "active") return false;
       return true;
     });
-  }, [sops, station, search, role]);
+  }, [sops, station, search, role, lang]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { total: sops.length };
@@ -38,24 +42,22 @@ export default function LibraryView({
 
   return (
     <div className="max-w-[960px] mx-auto px-7 py-8">
-      {role === "admin" && (
-        <UploadArea facilityId={facilityId} stationId={station === "all" ? null : station} />
-      )}
+      {role === "admin" && <UploadArea facilityId={facilityId} lang={lang} />}
 
       <div className="flex justify-between items-center mb-5">
-        <h1 className="text-2xl font-bold tracking-tight2 m-0">Procedures</h1>
+        <h1 className="text-2xl font-bold tracking-tight2 m-0">{t(lang, "proceduresTitle")}</h1>
         <div className="relative">
           <span className="absolute left-[11px] top-1/2 -translate-y-1/2 text-[13px] text-text-tertiary">⌕</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search"
+            placeholder={t(lang, "search")}
             className="pl-[30px] pr-3 py-2 border border-border rounded-lg text-[13px] w-[200px] outline-none bg-surface"
           />
         </div>
       </div>
 
-      <StationFilter stations={stations} active={station} onChange={setStation} counts={counts} />
+      <StationFilter stations={stations} active={station} onChange={setStation} counts={counts} lang={lang} />
 
       <div className="flex flex-col gap-px bg-border rounded-xl overflow-hidden">
         {filtered.map((sop) => (
@@ -65,11 +67,11 @@ export default function LibraryView({
             className="px-6 py-[18px] bg-surface hover:bg-[#FAFAFA] transition"
           >
             <div className="flex justify-between items-baseline mb-1">
-              <span className="text-[15px] font-semibold">{sop.title}</span>
-              {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">Draft</span>}
-              {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">Archived</span>}
+              <span className="text-[15px] font-semibold">{pickI18n(sop, "title", lang)}</span>
+              {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
+              {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
             </div>
-            <div className="text-[13px] text-text-secondary leading-relaxed mb-2">{sop.description}</div>
+            <div className="text-[13px] text-text-secondary leading-relaxed mb-2">{pickI18n(sop, "description", lang)}</div>
             <div className="text-[12px] text-text-tertiary">
               {[
                 stations.find((s) => s.id === sop.station_id)?.name,
@@ -77,7 +79,7 @@ export default function LibraryView({
                 sop.type === "pdf" ? "PDF" : null,
                 sop.type === "image" ? "Image" : null,
                 sop.trainer || null,
-                `${sop.stepCount} steps`,
+                `${sop.stepCount} ${t(lang, "steps")}`,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -85,7 +87,7 @@ export default function LibraryView({
           </Link>
         ))}
         {filtered.length === 0 && (
-          <div className="py-10 text-center bg-surface text-[13px] text-text-tertiary">No procedures found.</div>
+          <div className="py-10 text-center bg-surface text-[13px] text-text-tertiary">{t(lang, "noProcedures")}</div>
         )}
       </div>
     </div>

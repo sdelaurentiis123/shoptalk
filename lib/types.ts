@@ -28,6 +28,8 @@ export interface Sop {
   station_id: string | null;
   title: string;
   description: string;
+  title_es: string;
+  description_es: string;
   type: SopType;
   status: SopStatus;
   file_path: string | null;
@@ -36,6 +38,7 @@ export interface Sop {
   trainer: string;
   recorded_at: string | null;
   transcript: string;
+  transcript_es: string;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +49,8 @@ export interface Step {
   sort_order: number;
   title: string;
   description: string;
+  title_es: string;
+  description_es: string;
   start_sec: number | null;
   end_sec: number | null;
 }
@@ -55,6 +60,7 @@ export interface Substep {
   step_id: string;
   sort_order: number;
   text: string;
+  text_es: string;
   time_sec: number | null;
 }
 
@@ -109,16 +115,21 @@ export interface Flag {
 
 export interface GeminiStepOut {
   title: string;
+  title_es: string;
   description: string;
+  description_es: string;
   startSeconds: number | null;
   endSeconds: number | null;
-  substeps: { text: string; timeSeconds: number | null }[];
+  substeps: { text: string; text_es: string; timeSeconds: number | null }[];
 }
 
 export interface GeminiOut {
   title: string;
+  title_es: string;
   description: string;
+  description_es: string;
   totalSeconds: number;
   transcript: string;
+  transcript_es: string;
   steps: GeminiStepOut[];
 }

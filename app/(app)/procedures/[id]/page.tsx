@@ -6,7 +6,7 @@ import { presignGet } from "@/lib/r2";
 import type { SopWithSteps } from "@/lib/types";
 
 export default async function SopPage({ params }: { params: { id: string } }) {
-  const { role, facilityId } = await getAuthContext();
+  const { role, facilityId, language } = await getAuthContext();
   if (!role || !facilityId) redirect("/login");
 
   const supabase = createClient();
@@ -31,5 +31,5 @@ export default async function SopPage({ params }: { params: { id: string } }) {
   }
 
   const full = { ...sop, file_url: signed } as SopWithSteps;
-  return <SopDetail sop={full} role={role} stations={stations ?? []} />;
+  return <SopDetail sop={full} role={role} stations={stations ?? []} lang={language} />;
 }
