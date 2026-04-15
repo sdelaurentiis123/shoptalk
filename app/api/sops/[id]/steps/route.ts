@@ -4,8 +4,8 @@ import { getAuthContext } from "@/lib/auth";
 import { markTranslationPending } from "@/lib/translate";
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const admin = createAdminClient();
   const { data: sop } = await admin.from("sops").select("id, facility_id").eq("id", params.id).maybeSingle();

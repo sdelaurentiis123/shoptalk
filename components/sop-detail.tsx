@@ -30,7 +30,58 @@ export default function SopDetail({
       substeps: [...s.substeps].sort((a, b) => a.sort_order - b.sort_order),
     })),
   );
-  const [editMode, setEditMode] = useState(false);
+  const [editMode, setEditModeRaw] = useState(false);
+  const [lockedBy, setLockedBy] = useState<{ email: string | null; at: string } | null>(null);
+  const [lockError, setLockError] = useState<string>("");
+
+  async function setEditMode(next: boolean, force = false) {
+    if (!next) {
+      setEditModeRaw(false);
+      setLockedBy(null);
+      setLockError("");
+      try {
+        await fetch(`/api/sops/${sop.id}/lock`, { method: "DELETE" });
+      } catch {}
+      return;
+    }
+    const res = await fetch(`/api/sops/${sop.id}/lock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }),
+    });
+    if (res.status === 409) {
+      const data = await res.json().catch(() => ({}));
+      setLockedBy({ email: data.locked_by_email ?? null, at: data.locked_at });
+      setLockError("");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setLockError(data.error || "could not claim edit lock");
+      return;
+    }
+    setLockedBy(null);
+    setLockError("");
+    setEditModeRaw(true);
+  }
+
+  useEffect(() => {
+    if (!editMode) return;
+    const i = setInterval(() => {
+      fetch(`/api/sops/${sop.id}/lock/renew`, { method: "POST" }).catch(() => {});
+    }, 2 * 60 * 1000);
+    const onBeforeUnload = () => {
+      navigator.sendBeacon?.(
+        `/api/sops/${sop.id}/lock`,
+        new Blob([JSON.stringify({})], { type: "application/json" }),
+      );
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      clearInterval(i);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [editMode, sop.id]);
   const [editing, setEditing] = useState<{ step: StepWithSubsteps; index: number } | null>(null);
   const [activeStep, setActiveStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -286,7 +337,7 @@ export default function SopDetail({
               </button>
             )}
             <button
-              onClick={() => setEditMode((v) => !v)}
+              onClick={() => setEditMode(!editMode)}
               className={`px-4 py-[7px] rounded-full text-[13px] font-medium ${
                 editMode ? "bg-text-primary text-white" : "border border-border"
               }`}
@@ -310,6 +361,29 @@ export default function SopDetail({
           </div>
         )}
       </div>
+
+      {(lockedBy || lockError) && (
+        <div className="mb-4 bg-warning-bg border border-warning rounded-xl p-4 text-[13px] flex items-center justify-between gap-3">
+          <div>
+            {lockedBy ? (
+              <>
+                <strong>{lockedBy.email ?? "Another admin"}</strong> is editing this SOP
+                {lockedBy.at && <> (since {new Date(lockedBy.at).toLocaleTimeString()})</>}. You&rsquo;re in read-only mode.
+              </>
+            ) : (
+              lockError
+            )}
+          </div>
+          {lockedBy && (
+            <button
+              onClick={() => setEditMode(true, true)}
+              className="px-3 py-1.5 rounded-full bg-text-primary text-white text-[12px] font-medium"
+            >
+              Take over
+            </button>
+          )}
+        </div>
+      )}
 
       <div className={`grid md:grid-cols-[1fr_340px] gap-6 transition-opacity ${isTranslating ? "opacity-60" : ""}`}>
         <div>

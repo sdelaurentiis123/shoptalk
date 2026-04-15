@@ -1,13 +1,40 @@
 -- ShopTalk schema. Run in the Supabase SQL editor.
 
+create extension if not exists citext;
+
 create table if not exists facilities (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   join_code text unique not null,
-  admin_user_id uuid references auth.users(id) not null,
   default_language text default 'en',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
+);
+
+create table if not exists facility_members (
+  facility_id uuid references facilities(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  role text not null check (role in ('owner', 'admin')),
+  invited_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz default now(),
+  primary key (facility_id, user_id)
+);
+
+create table if not exists facility_invites (
+  id uuid primary key default gen_random_uuid(),
+  facility_id uuid references facilities(id) on delete cascade not null,
+  email citext not null,
+  role text not null default 'admin' check (role in ('owner', 'admin')),
+  token text unique not null,
+  invited_by uuid references auth.users(id) on delete set null,
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  accepted_at timestamptz,
+  created_at timestamptz default now()
+);
+
+create table if not exists platform_admins (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz default now()
 );
 
 create table if not exists stations (
@@ -38,6 +65,8 @@ create table if not exists sops (
   translation_status text default 'ready' check (translation_status in ('pending','ready','failed')),
   translation_claimed_at timestamptz,
   english_hash text default '',
+  edit_lock_by uuid references auth.users(id) on delete set null,
+  edit_lock_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -107,6 +136,9 @@ create table if not exists flags (
   resolved_at timestamptz
 );
 
+create index if not exists idx_facility_members_user on facility_members(user_id);
+create index if not exists idx_facility_invites_token on facility_invites(token);
+create index if not exists idx_facility_invites_email on facility_invites(email);
 create index if not exists idx_sops_facility on sops(facility_id);
 create index if not exists idx_steps_sop on steps(sop_id);
 create index if not exists idx_substeps_step on substeps(step_id);

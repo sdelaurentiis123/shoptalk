@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { Facility, Station, LangCode } from "@/lib/types";
 import { t } from "@/lib/i18n";
 
@@ -34,6 +35,14 @@ export default function SettingsForm({ facility, stations, lang }: { facility: F
   return (
     <div className="max-w-[720px] mx-auto px-7 py-8">
       <h1 className="text-2xl font-bold tracking-tight2 mb-6">{t(lang, "settingsTitle")}</h1>
+
+      <Link
+        href="/settings/members"
+        className="block bg-surface border border-border rounded-xl p-5 mb-6 hover:bg-background transition"
+      >
+        <div className="text-[15px] font-semibold">Workspace members</div>
+        <div className="text-[13px] text-text-secondary mt-0.5">Invite other admins to this workspace.</div>
+      </Link>
 
       <section className="bg-surface border border-border rounded-xl p-6 mb-6">
         <div className="text-[15px] font-semibold mb-1">{facility.name}</div>

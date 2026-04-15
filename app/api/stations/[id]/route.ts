@@ -3,8 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => null);
   const patch: Record<string, unknown> = {};
@@ -46,8 +46,8 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 }
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const admin = createAdminClient();
   const { data: existing } = await admin

@@ -6,15 +6,24 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { LANGUAGES, t } from "@/lib/i18n";
 import type { LangCode, Role } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import WorkspaceSwitcher, { type WorkspaceOption } from "@/components/workspace-switcher";
 
 export default function Nav({
   role,
   lang,
   initial,
+  isPlatformAdmin = false,
+  workspace = null,
+  workspaces = [],
+  allWorkspaces,
 }: {
   role: Role;
   lang: LangCode;
   initial?: string;
+  isPlatformAdmin?: boolean;
+  workspace?: WorkspaceOption | null;
+  workspaces?: WorkspaceOption[];
+  allWorkspaces?: WorkspaceOption[];
 }) {
   const [langOpen, setLangOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -94,6 +103,14 @@ export default function Nav({
         </div>
       </div>
       <div ref={menuRef} className="flex items-center gap-3 relative">
+        {role === "admin" && (
+          <WorkspaceSwitcher
+            current={workspace}
+            workspaces={workspaces}
+            allWorkspaces={allWorkspaces}
+            isPlatformAdmin={isPlatformAdmin}
+          />
+        )}
         <button
           onClick={() => {
             setLangOpen((v) => !v);
@@ -148,6 +165,15 @@ export default function Nav({
                 className="block px-4 py-[10px] text-[13px] text-text-primary hover:bg-background"
               >
                 {t(lang, "settings")}
+              </Link>
+            )}
+            {isPlatformAdmin && (
+              <Link
+                href="/platform"
+                onClick={() => setUserMenuOpen(false)}
+                className="block px-4 py-[10px] text-[13px] text-text-primary hover:bg-background"
+              >
+                Platform
               </Link>
             )}
             <div className="h-px bg-border my-1" />

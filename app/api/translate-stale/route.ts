@@ -11,8 +11,8 @@ export const maxDuration = 60;
 // (runs on every admin page load, catches anything cron hasn't gotten to
 // yet). translateAllPending() is shared with the Vercel Cron worker.
 export async function POST() {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const admin = createAdminClient();
   try {

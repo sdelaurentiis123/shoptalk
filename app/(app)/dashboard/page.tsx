@@ -5,8 +5,8 @@ import { t } from "@/lib/i18n";
 import FlagsList from "./flags-list";
 
 export default async function Dashboard() {
-  const { role, facilityId, language } = await getAuthContext();
-  if (role !== "admin" || !facilityId) redirect("/login");
+  const { role, facilityId, language, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) redirect("/login");
   const supabase = createClient();
   const [{ data: facility }, { data: sops }, { data: ops }, { data: flags }] = await Promise.all([
     supabase.from("facilities").select("*").eq("id", facilityId).maybeSingle(),

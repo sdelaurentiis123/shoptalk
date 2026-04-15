@@ -5,8 +5,8 @@ import { completeMultipart } from "@/lib/r2";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => null);
   const key = String(body?.key ?? "");

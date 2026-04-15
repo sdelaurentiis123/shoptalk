@@ -42,12 +42,20 @@ export async function POST(req: Request) {
 
   const { data: fac, error: fErr } = await admin
     .from("facilities")
-    .insert({ name: facility_name, join_code: code, admin_user_id: created.user.id })
+    .insert({ name: facility_name, join_code: code })
     .select()
     .single();
   if (fErr) {
     console.error("[signup] facility insert:", fErr);
     return NextResponse.json({ error: fErr.message }, { status: 500 });
+  }
+
+  const { error: mErr } = await admin
+    .from("facility_members")
+    .insert({ facility_id: fac.id, user_id: created.user.id, role: "owner" });
+  if (mErr) {
+    console.error("[signup] facility_members insert:", mErr);
+    return NextResponse.json({ error: mErr.message }, { status: 500 });
   }
 
   // Attach the session cookie in the same response so the client is signed in.

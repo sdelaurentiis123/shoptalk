@@ -18,8 +18,8 @@ function fail(stage: string, msg: string, status = 500) {
 
 export async function POST(req: Request) {
   try {
-    const { role, facilityId, user } = await getAuthContext();
-    if (!user || role !== "admin" || !facilityId) return fail("auth", "unauthorized", 401);
+    const { role, facilityId, user, isPlatformAdmin } = await getAuthContext();
+    if (!user || (role !== "admin" && !isPlatformAdmin) || !facilityId) return fail("auth", "unauthorized", 401);
 
     const body = await req.json().catch(() => null);
     const storage_path = String(body?.storage_path ?? "").trim();

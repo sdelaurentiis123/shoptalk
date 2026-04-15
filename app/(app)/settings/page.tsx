@@ -4,8 +4,8 @@ import { getAuthContext } from "@/lib/auth";
 import SettingsForm from "./settings-form";
 
 export default async function Settings() {
-  const { role, facilityId, language } = await getAuthContext();
-  if (role !== "admin" || !facilityId) redirect("/login");
+  const { role, facilityId, language, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) redirect("/login");
   const supabase = createClient();
   const [{ data: facility }, { data: stations }] = await Promise.all([
     supabase.from("facilities").select("*").eq("id", facilityId).maybeSingle(),

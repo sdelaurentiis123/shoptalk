@@ -21,8 +21,8 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-  const { role, facilityId } = await getAuthContext();
-  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const { role, facilityId, isPlatformAdmin } = await getAuthContext();
+  if ((role !== "admin" && !isPlatformAdmin) || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => null);
   const id = body?.id as string | undefined;
   const status = body?.status as "resolved" | "dismissed" | "open" | undefined;
