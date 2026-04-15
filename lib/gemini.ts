@@ -1,36 +1,75 @@
+import { GoogleGenAI, createUserContent, createPartFromUri } from "@google/genai";
+import { tmpdir } from "os";
+import { join } from "path";
+import { writeFile, unlink } from "fs/promises";
 import type { GeminiOut } from "./types";
 
-const KEY = process.env.GEMINI_API_KEY!;
-const MODEL = "gemini-2.0-flash";
+const MODEL = "gemini-3-pro-preview";
 
-const PROMPT = (kind: "video" | "pdf") => `You are analyzing a manufacturing procedure ${kind === "video" ? "video" : "document"}.
+let _ai: GoogleGenAI | null = null;
+function ai() {
+  if (_ai) return _ai;
+  _ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  return _ai;
+}
 
-Extract each distinct procedural step. For each step provide:
-- title: short name (3-6 words)
-- description: one sentence
-- startSeconds: integer, when step begins (null for PDFs)
-- endSeconds: integer, when step ends (null for PDFs)
-- substeps: array of sub-actions, each with:
-  - text: what to do
-  - timeSeconds: integer timestamp (null for PDFs)
+const SYSTEM_PROMPT = `You are a senior manufacturing operations analyst. You watch training videos and technical documents and turn them into floor-ready Standard Operating Procedures that a line operator — possibly a non-native English speaker — can follow to do the job correctly and safely.
 
-Also provide:
-- title: overall procedure name
-- description: one sentence summary
-- totalSeconds: ${kind === "video" ? "video duration in seconds" : "0"}
+Your output powers a mobile app that operators use on the factory floor. Precision matters. Shallow or generic steps hurt people.
 
-Return ONLY valid JSON in this format, no markdown:
+USE EVERY SIGNAL AVAILABLE TO YOU:
+- Visual: what is on screen, what the operator does with their hands, the state of equipment, changes in lighting / timers / indicators.
+- Audio: any voiceover narration (transcribe and use it), spoken instructions from the trainer, ambient audio cues (beeps, alarms, timer sounds, airflow, motors).
+- Text: any on-screen captions, control-panel labels, tool markings, labels on ingredients or equipment.
+
+EXTRACTION TARGETS:
+
+1. Structured steps: the ordered, independent actions that make up the procedure.
+   - Every step has a concrete start and end second.
+   - Steps should not overlap in time. Tight to what's actually happening.
+   - A "step" is what you would list in a written SOP, not every motion.
+
+2. Substeps inside each step: the specific actions the operator takes, in order. These are what the operator will literally read while doing the job. Substeps MUST capture:
+   - PPE changes or checks ("Put on nitrile gloves.", "Verify hairnet is on.")
+   - Exact controls touched, with button names in quotes when readable ("Press \\"MANUAL BAKE\\".", "Turn dial to \\"PROOF\\".")
+   - Exact numeric parameters — temperatures in F or C as shown, times in minutes/seconds, quantities with units ("Set temperature to 375°F.", "Set timer to 8 minutes.")
+   - Safety warnings when the video shows one ("Do not touch the top rack: surface is hot.")
+   - Verification / pass-fail criteria ("Confirm red light turns green.", "Rack must sit flush with guide rails.")
+   - Tools / consumables used, by name
+   - Every substep has a timeSeconds anchored to when it happens in the video.
+
+3. A screenplay-style transcript of the entire video. This is a continuous play-by-play, third person present tense, of everything happening — what's visible AND what's said. Format each line as:
+   [m:ss] narration
+   One line per discrete beat (roughly every 2–5 seconds). Include:
+   - What the operator is doing with their body.
+   - What equipment state changes occur on screen (panel lights, readouts, timers).
+   - Every audible line of narration, verbatim when possible, in quotes: [0:12] The trainer says, "Make sure the rack is fully seated before you close the door."
+   - Non-verbal audio: [1:34] A high beep sounds three times.
+   This transcript is the source of truth for detail questions later, so do not skip the small stuff.
+
+FIELD-LEVEL RULES:
+- title (overall): 3–6 words, action-led (e.g. "Revent Oven Manual Bake").
+- description (overall): one sentence describing what operator will accomplish.
+- totalSeconds: the exact runtime of the video. 0 for PDFs/images.
+- per-step title: 3–6 words, imperative.
+- per-step description: one sentence, plain language.
+- For PDFs / images: startSeconds / endSeconds / timeSeconds are null. transcript is a page-by-page description of what's in the document instead of time-stamped.
+- Never invent content that isn't actually in the source. If the video never shows the actual temperature, don't make one up — write the substep as "Set the oven to the temperature specified in the shift batch sheet." Include only what's there.
+
+OUTPUT FORMAT:
+Return ONLY valid JSON, no markdown, no commentary, no fences. Schema:
 {
   "title": "string",
   "description": "string",
   "totalSeconds": 0,
+  "transcript": "string",
   "steps": [
     {
       "title": "string",
       "description": "string",
       "startSeconds": 0,
-      "endSeconds": 5,
-      "substeps": [{ "text": "string", "timeSeconds": 2 }]
+      "endSeconds": 0,
+      "substeps": [{ "text": "string", "timeSeconds": 0 }]
     }
   ]
 }`;
@@ -40,90 +79,29 @@ function parseJson(text: string): GeminiOut {
   return JSON.parse(cleaned);
 }
 
-async function generateFromInline(mimeType: string, dataB64: string, prompt: string): Promise<GeminiOut> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inlineData: { mimeType, data: dataB64 } }, { text: prompt }] }],
-        generationConfig: { temperature: 0.1 },
-      }),
-    },
-  );
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini: empty response");
-  return parseJson(text);
-}
+async function uploadAndWait(buf: Buffer, mimeType: string, fileName: string) {
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const tmpPath = join(tmpdir(), `shoptalk-${crypto.randomUUID()}-${safeName}`);
+  await writeFile(tmpPath, buf);
 
-async function uploadLargeFile(buf: Buffer, mimeType: string, displayName: string): Promise<string> {
-  // Resumable upload per Gemini File API.
-  const startRes = await fetch(
-    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "X-Goog-Upload-Protocol": "resumable",
-        "X-Goog-Upload-Command": "start",
-        "X-Goog-Upload-Header-Content-Length": String(buf.length),
-        "X-Goog-Upload-Header-Content-Type": mimeType,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ file: { display_name: displayName } }),
-    },
-  );
-  if (!startRes.ok) throw new Error(`Gemini start upload ${startRes.status}: ${await startRes.text()}`);
-  const uploadUrl = startRes.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("Gemini: no upload URL");
+  try {
+    let file = await ai().files.upload({
+      file: tmpPath,
+      config: { mimeType, displayName: fileName },
+    });
 
-  const uploadRes = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      "Content-Length": String(buf.length),
-      "X-Goog-Upload-Offset": "0",
-      "X-Goog-Upload-Command": "upload, finalize",
-    },
-    body: new Uint8Array(buf),
-  });
-  if (!uploadRes.ok) throw new Error(`Gemini upload ${uploadRes.status}: ${await uploadRes.text()}`);
-  const data = await uploadRes.json();
-  const name: string = data.file?.name;
-  const uri: string = data.file?.uri;
-  if (!name || !uri) throw new Error("Gemini: missing file metadata");
-
-  // Poll for ACTIVE.
-  for (let i = 0; i < 60; i++) {
-    const s = await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}?key=${KEY}`);
-    if (s.ok) {
-      const j = await s.json();
-      if (j.state === "ACTIVE") return uri;
-      if (j.state === "FAILED") throw new Error(`Gemini file failed: ${JSON.stringify(j)}`);
+    for (let i = 0; i < 120 && file.state !== "ACTIVE"; i++) {
+      if (file.state === "FAILED") throw new Error(`Gemini file processing failed: ${JSON.stringify(file)}`);
+      await new Promise((r) => setTimeout(r, 2000));
+      if (!file.name) throw new Error("Gemini: file has no name");
+      file = await ai().files.get({ name: file.name });
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    if (file.state !== "ACTIVE") throw new Error("Gemini: file did not become ACTIVE in time");
+    if (!file.uri || !file.mimeType) throw new Error("Gemini: uploaded file missing uri/mimeType");
+    return { uri: file.uri, mimeType: file.mimeType };
+  } finally {
+    unlink(tmpPath).catch(() => {});
   }
-  throw new Error("Gemini: file did not become ACTIVE in time");
-}
-
-async function generateFromFileUri(fileUri: string, mimeType: string, prompt: string): Promise<GeminiOut> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ fileData: { fileUri, mimeType } }, { text: prompt }] }],
-        generationConfig: { temperature: 0.1 },
-      }),
-    },
-  );
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini: empty response");
-  return parseJson(text);
 }
 
 export async function processWithGemini(
@@ -133,17 +111,34 @@ export async function processWithGemini(
 ): Promise<GeminiOut> {
   const isVideo = mimeType.startsWith("video/");
   const isPdf = mimeType === "application/pdf";
-  const prompt = PROMPT(isVideo ? "video" : "pdf");
 
-  // For PDFs under 20MB, use inline. For larger or videos, use File API.
   const INLINE_LIMIT = 18 * 1024 * 1024;
-  if (!isVideo && buf.length < INLINE_LIMIT) {
-    return generateFromInline(mimeType, buf.toString("base64"), prompt);
-  }
-  if (isVideo || isPdf) {
-    const uri = await uploadLargeFile(buf, mimeType, fileName);
-    return generateFromFileUri(uri, mimeType, prompt);
-  }
-  // images
-  return generateFromInline(mimeType, buf.toString("base64"), prompt);
+  const useInline = !isVideo && buf.length < INLINE_LIMIT;
+
+  const config = {
+    thinkingConfig: { thinkingLevel: "high" },
+    mediaResolution: "MEDIA_RESOLUTION_HIGH",
+  } as any;
+
+  const response = useInline
+    ? await ai().models.generateContent({
+        model: MODEL,
+        contents: createUserContent([
+          { inlineData: { mimeType, data: buf.toString("base64") } },
+          SYSTEM_PROMPT,
+        ]),
+        config,
+      })
+    : await (async () => {
+        const { uri, mimeType: uploadedMime } = await uploadAndWait(buf, mimeType, fileName);
+        return ai().models.generateContent({
+          model: MODEL,
+          contents: createUserContent([createPartFromUri(uri, uploadedMime), SYSTEM_PROMPT]),
+          config,
+        });
+      })();
+
+  const text = response.text;
+  if (!text) throw new Error("Gemini: empty response");
+  return parseJson(text);
 }

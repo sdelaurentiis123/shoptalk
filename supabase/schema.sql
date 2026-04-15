@@ -30,6 +30,7 @@ create table if not exists sops (
   total_seconds integer default 0,
   trainer text default '',
   recorded_at timestamptz,
+  transcript text default '',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

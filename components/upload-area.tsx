@@ -111,7 +111,8 @@ export default function UploadArea({
 
       function onBytes(delta: number) {
         uploadedBytes += delta;
-        const pct = Math.min(99, Math.floor((uploadedBytes / totalBytes) * 100));
+        // Upload is "stage 1 of 2". Cap at 70 here; Gemini takes the rest.
+        const pct = Math.min(70, Math.floor((uploadedBytes / totalBytes) * 70));
         setProgress(pct);
         const elapsed = (Date.now() - startTs) / 1000;
         if (elapsed > 1) {
@@ -152,6 +153,7 @@ export default function UploadArea({
 
       // 3. Complete.
       setStatus("Finalizing upload…");
+      setProgress(75);
       const compRes = await fetch("/api/uploads/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,9 +163,9 @@ export default function UploadArea({
       if (!compRes.ok) throw new Error(comp.error || "complete failed");
 
       // 4. Kick off Gemini processing.
-      setProgress(100);
+      setProgress(85);
       setSpeed("");
-      setStatus(isVideo ? "Analyzing video with Gemini…" : "Analyzing document with Gemini…");
+      setStatus(isVideo ? "Analyzing audio + video with Gemini…" : "Analyzing document with Gemini…");
       const procRes = await fetch("/api/process-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -177,6 +179,7 @@ export default function UploadArea({
       const proc = await procRes.json();
       if (!procRes.ok) throw new Error(proc.error || "processing failed");
 
+      setProgress(100);
       setStatus("");
       setProcessing(false);
       router.push(`/procedures/${proc.sop.id}`);
@@ -234,11 +237,9 @@ export default function UploadArea({
             <div className="text-[12px] text-text-tertiary mt-0.5 tabular-nums">
               {progress}%{speed ? ` · ${speed}` : ""} · This may take a moment for longer videos.
             </div>
-            {progress > 0 && progress < 100 && (
-              <div className="h-1 bg-background rounded-full mt-2 overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-              </div>
-            )}
+            <div className="h-1 bg-background rounded-full mt-2 overflow-hidden">
+              <div className="h-full bg-primary transition-all duration-500" style={{ width: `${Math.max(progress, 4)}%` }} />
+            </div>
           </div>
           <button onClick={cancel} className="text-[12px] text-text-tertiary hover:text-danger">
             Cancel

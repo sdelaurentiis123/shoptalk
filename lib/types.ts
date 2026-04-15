@@ -34,6 +34,7 @@ export interface Sop {
   total_seconds: number;
   trainer: string;
   recorded_at: string | null;
+  transcript: string;
   created_at: string;
   updated_at: string;
 }
@@ -117,5 +118,6 @@ export interface GeminiOut {
   title: string;
   description: string;
   totalSeconds: number;
+  transcript: string;
   steps: GeminiStepOut[];
 }

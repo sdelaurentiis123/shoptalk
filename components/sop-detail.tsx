@@ -129,13 +129,6 @@ export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role
         )}
       </div>
 
-      <div className="flex items-baseline gap-2 mb-1">
-        <h1 className="text-[22px] font-bold tracking-tight2">{sop.title}</h1>
-        {status === "draft" && <span className="text-[11px] font-medium text-warning">Draft</span>}
-        {status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">Archived</span>}
-      </div>
-      <p className="text-[13px] text-text-secondary mb-6">{sop.description}</p>
-
       <div className="grid md:grid-cols-[1fr_340px] gap-6">
         <div>
           {isVideo && sop.file_url ? (
@@ -148,6 +141,59 @@ export default function SopDetail({ sop, role }: { sop: SopWithSteps; role: Role
           ) : (
             <div className="bg-surface border border-border rounded-xl p-10 text-center text-text-tertiary">
               No file attached.
+            </div>
+          )}
+
+          <div className="mt-5 mb-2 flex items-baseline gap-2">
+            <h1 className="text-[22px] font-bold tracking-tight2">{sop.title}</h1>
+            {status === "draft" && <span className="text-[11px] font-medium text-warning">Draft</span>}
+            {status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">Archived</span>}
+          </div>
+          <div className="text-[12px] text-text-tertiary mb-1">
+            {[
+              sop.trainer ? `Trainer: ${sop.trainer}` : "Trainer: Unknown",
+              sop.recorded_at ? `Recorded ${new Date(sop.recorded_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+          {sop.description && (
+            <p className="text-[13px] text-text-secondary mb-4">{sop.description}</p>
+          )}
+
+          {steps[activeStep] && (
+            <div className="rounded-xl border border-primary/30 bg-primary-bg p-5 mt-4">
+              <div className="text-[11px] font-semibold tracking-wider uppercase text-primary mb-2">
+                Currently Playing · Step {activeStep + 1}
+              </div>
+              <div className="text-[20px] font-semibold tracking-tight2 leading-snug mb-1">
+                {steps[activeStep].title}
+              </div>
+              {steps[activeStep].description && (
+                <p className="text-[13px] text-text-secondary leading-relaxed mb-3">
+                  {steps[activeStep].description}
+                </p>
+              )}
+              {steps[activeStep].substeps.length > 0 && (
+                <ul className="space-y-2">
+                  {steps[activeStep].substeps.map((ss, j) => (
+                    <li key={ss.id} className="flex items-start gap-2 text-[13px] text-text-primary">
+                      <span className="text-primary font-semibold w-4 flex-shrink-0">
+                        {String.fromCharCode(97 + j)}.
+                      </span>
+                      <span className="flex-1 leading-relaxed">{ss.text}</span>
+                      {isVideo && ss.time_sec != null && (
+                        <button
+                          onClick={() => jumpTo(ss.time_sec!)}
+                          className="flex-shrink-0 text-[11px] tabular-nums text-primary font-semibold bg-surface border border-border rounded-full px-2 py-0.5 hover:bg-primary hover:text-white transition"
+                        >
+                          {fmtTime(ss.time_sec)}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>

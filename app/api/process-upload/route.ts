@@ -54,7 +54,11 @@ export async function POST(req: Request) {
     try {
       log("gemini:start");
       gemini = await processWithGemini(buf, file_type, file_name);
-      log("gemini:done", { title: gemini.title, steps: gemini.steps?.length });
+      log("gemini:done", {
+        title: gemini.title,
+        steps: gemini.steps?.length,
+        transcriptChars: gemini.transcript?.length ?? 0,
+      });
     } catch (e: any) {
       return fail("gemini", e?.message ?? String(e));
     }
@@ -77,6 +81,7 @@ export async function POST(req: Request) {
         file_path: storage_path,
         file_url: signed_url,
         total_seconds: sopType === "video" ? (gemini.totalSeconds || 0) : 0,
+        transcript: gemini.transcript ?? "",
         recorded_at: new Date().toISOString(),
       })
       .select()
