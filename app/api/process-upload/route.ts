@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { processWithGemini } from "@/lib/gemini";
 import { getObjectBuffer, presignGet } from "@/lib/r2";
-import { translateSop, markTranslationPending } from "@/lib/translate";
+import { markTranslationPending } from "@/lib/translate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -126,14 +126,13 @@ export async function POST(req: Request) {
       }
     }
 
-    // Kick off Spanish translation in the background. The client navigates
-    // to /procedures/<id> immediately; Spanish appears grayed-out and
-    // auto-refreshes once `translation_status` flips to 'ready'.
+    // Mark Spanish translation as pending. The cron worker
+    // (/api/cron/translate, runs every minute on Vercel) and the mount-time
+    // healer (/api/translate-stale, runs on every admin page load on localhost
+    // and Vercel) will pick it up and complete the translation synchronously
+    // within their own request. No fire-and-forget — serverless kills that.
     await markTranslationPending(admin, sop.id);
     log("translate:queued");
-    void translateSop(admin, sop.id).catch((e) =>
-      console.error("[process-upload] translate failed:", e?.message ?? e),
-    );
 
     return NextResponse.json({ ok: true, sop });
   } catch (e: any) {

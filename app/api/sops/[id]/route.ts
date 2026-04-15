@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { deleteObject } from "@/lib/r2";
-import { markTranslationPending, translateSop } from "@/lib/translate";
+import { markTranslationPending } from "@/lib/translate";
 
 const STATUSES = new Set(["draft", "active", "archived"]);
 
@@ -62,12 +62,10 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   const { data, error } = await admin.from("sops").update(patch).eq("id", params.id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // English title changed → Spanish needs to catch up.
+  // English title changed → Spanish needs to catch up. Cron worker +
+  // mount-time healer pick it up; no fire-and-forget here.
   if (titleChanged) {
     await markTranslationPending(admin, params.id);
-    void translateSop(admin, params.id).catch((e) =>
-      console.error("[sops/put] translate failed:", e?.message ?? e),
-    );
   }
 
   return NextResponse.json({ ok: true, sop: data });

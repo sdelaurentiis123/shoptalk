@@ -81,6 +81,38 @@ export async function markTranslationPending(admin: SupabaseClient, sopId: strin
   await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
 }
 
+// Scan for unclaimed pending SOPs and translate them serially. Shared between
+// the mount-time healer (/api/translate-stale) and the cron worker
+// (/api/cron/translate). If facilityId is provided, scoped to that facility;
+// otherwise scans every facility (cron).
+export async function translateAllPending(
+  admin: SupabaseClient,
+  facilityId?: string,
+): Promise<{ processed: string[] }> {
+  const cutoffIso = new Date(Date.now() - CLAIM_TTL_MS).toISOString();
+  let q = admin
+    .from("sops")
+    .select("id")
+    .eq("translation_status", "pending")
+    .or(`translation_claimed_at.is.null,translation_claimed_at.lt.${cutoffIso}`);
+  if (facilityId) q = q.eq("facility_id", facilityId);
+
+  const { data, error } = await q;
+  if (error) throw new Error(`scan: ${error.message}`);
+  const ids = (data ?? []).map((r) => r.id as string);
+
+  const processed: string[] = [];
+  for (const id of ids) {
+    try {
+      await translateSop(admin, id);
+      processed.push(id);
+    } catch (e) {
+      console.error("[translateAllPending] sop", id, "failed:", e);
+    }
+  }
+  return { processed };
+}
+
 const CLAIM_TTL_MS = 90_000;
 
 // Race-free single-flight claim. Uses a dedicated `translation_claimed_at`
