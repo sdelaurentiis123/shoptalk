@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
+import { deleteObject } from "@/lib/r2";
 
 const STATUSES = new Set(["draft", "active", "archived"]);
 
@@ -52,4 +53,32 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   const { data, error } = await admin.from("sops").update(patch).eq("id", params.id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, sop: data });
+}
+
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  const { role, facilityId } = await getAuthContext();
+  if (role !== "admin" || !facilityId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const admin = createAdminClient();
+  const { data: existing } = await admin
+    .from("sops")
+    .select("facility_id, file_path")
+    .eq("id", params.id)
+    .maybeSingle();
+  if (!existing || existing.facility_id !== facilityId) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  // Best-effort R2 cleanup — don't block DB delete if it fails.
+  if (existing.file_path) {
+    try {
+      await deleteObject(existing.file_path);
+    } catch (e) {
+      console.warn("[sops/delete] R2 delete failed:", e);
+    }
+  }
+
+  const { error } = await admin.from("sops").delete().eq("id", params.id).eq("facility_id", facilityId);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }

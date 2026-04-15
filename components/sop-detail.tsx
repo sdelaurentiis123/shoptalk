@@ -34,6 +34,7 @@ export default function SopDetail({
   const [editing, setEditing] = useState<{ step: StepWithSubsteps; index: number } | null>(null);
   const [activeStep, setActiveStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(sop.status);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -88,6 +89,21 @@ export default function SopDetail({
       setEditMode(false);
       router.refresh();
     }
+  }
+
+  async function deleteSop() {
+    const title = pickI18n(sop, "title", lang) || "this procedure";
+    if (!confirm(t(lang, "deleteSopConfirm", { title }))) return;
+    setDeleting(true);
+    const res = await fetch(`/api/sops/${sop.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setDeleting(false);
+      alert(data.error || "delete failed");
+      return;
+    }
+    router.push("/procedures");
+    router.refresh();
   }
 
   async function setSopStatus(next: "draft" | "active" | "archived") {
@@ -151,9 +167,18 @@ export default function SopDetail({
               {editMode ? t(lang, "exitEdit") : t(lang, "edit")}
             </button>
             {editMode && (
-              <button onClick={save} disabled={saving} className="px-4 py-[7px] rounded-full bg-primary text-white text-[13px] font-medium">
-                {saving ? t(lang, "saving") : t(lang, "save")}
-              </button>
+              <>
+                <button onClick={save} disabled={saving || deleting} className="px-4 py-[7px] rounded-full bg-primary text-white text-[13px] font-medium">
+                  {saving ? t(lang, "saving") : t(lang, "save")}
+                </button>
+                <button
+                  onClick={deleteSop}
+                  disabled={saving || deleting}
+                  className="px-4 py-[7px] rounded-full border border-danger text-danger text-[13px] font-medium hover:bg-danger hover:text-white transition"
+                >
+                  {deleting ? t(lang, "deleting") : t(lang, "deleteSop")}
+                </button>
+              </>
             )}
           </div>
         )}

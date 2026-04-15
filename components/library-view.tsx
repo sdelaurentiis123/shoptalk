@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Sop, Station, LangCode } from "@/lib/types";
 import { fmtTime } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -10,7 +11,7 @@ import UploadArea from "./upload-area";
 import { pickI18n } from "@/lib/sop-i18n";
 
 export default function LibraryView({
-  sops,
+  sops: initial,
   stations,
   role,
   facilityId,
@@ -22,8 +23,30 @@ export default function LibraryView({
   facilityId: string;
   lang: LangCode;
 }) {
+  const router = useRouter();
+  const [sops, setSops] = useState(initial);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [station, setStation] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
+
+  async function deleteSop(e: React.MouseEvent, sop: Sop) {
+    e.stopPropagation();
+    e.preventDefault();
+    const title = pickI18n(sop, "title", lang) || "this procedure";
+    if (!confirm(t(lang, "deleteSopConfirm", { title }))) return;
+    setDeleting(sop.id);
+    const prev = sops;
+    setSops((list) => list.filter((s) => s.id !== sop.id));
+    const res = await fetch(`/api/sops/${sop.id}`, { method: "DELETE" });
+    setDeleting(null);
+    if (!res.ok) {
+      setSops(prev);
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "delete failed");
+    } else {
+      router.refresh();
+    }
+  }
 
   const filtered = useMemo(() => {
     return sops.filter((s) => {
@@ -64,13 +87,27 @@ export default function LibraryView({
           <Link
             key={sop.id}
             href={`/procedures/${sop.id}`}
-            className="px-6 py-[18px] bg-surface hover:bg-[#FAFAFA] transition"
+            className="group relative px-6 py-[18px] bg-surface hover:bg-[#FAFAFA] transition"
           >
-            <div className="flex justify-between items-baseline mb-1">
+            <div className="flex justify-between items-baseline mb-1 pr-8">
               <span className="text-[15px] font-semibold">{pickI18n(sop, "title", lang)}</span>
               {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
               {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}
             </div>
+            {role === "admin" && (
+              <button
+                onClick={(e) => deleteSop(e, sop)}
+                disabled={deleting === sop.id}
+                title={t(lang, "deleteSop")}
+                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus:opacity-100 transition w-7 h-7 flex items-center justify-center rounded-full text-text-tertiary hover:bg-danger-bg hover:text-danger disabled:opacity-50"
+              >
+                {deleting === sop.id ? (
+                  <span className="w-3 h-3 border-2 border-danger border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <span className="text-[16px] leading-none">×</span>
+                )}
+              </button>
+            )}
             <div className="text-[13px] text-text-secondary leading-relaxed mb-2">{pickI18n(sop, "description", lang)}</div>
             <div className="text-[12px] text-text-tertiary">
               {[
