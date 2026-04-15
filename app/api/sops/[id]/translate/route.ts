@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
-import { translateSop, markTranslationPending } from "@/lib/translate";
+import { translateSop } from "@/lib/translate";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,11 +18,18 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     .maybeSingle();
   if (!sop || sop.facility_id !== facilityId) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Force re-translation even if content hasn't changed.
-  await admin.from("sops").update({ english_hash: "" }).eq("id", params.id);
-  await markTranslationPending(admin, params.id);
-  void translateSop(admin, params.id).catch((e) =>
-    console.error("[sops/translate]", e?.message ?? e),
-  );
-  return NextResponse.json({ ok: true, status: "pending" });
+  // Force re-translation: clear the hash so translateSop doesn't short-circuit.
+  await admin
+    .from("sops")
+    .update({ english_hash: "", translation_status: "pending", updated_at: new Date().toISOString() })
+    .eq("id", params.id);
+
+  // Run synchronously so the function stays alive until Claude returns.
+  try {
+    await translateSop(admin, params.id);
+    return NextResponse.json({ ok: true, status: "ready" });
+  } catch (e: any) {
+    console.error("[sops/translate]", e);
+    return NextResponse.json({ error: e?.message ?? "translate failed" }, { status: 500 });
+  }
 }

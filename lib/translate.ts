@@ -2,8 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  maxRetries: 1,
+  timeout: 60_000,
+});
 const MODEL = "claude-sonnet-4-5";
+const CLAUDE_TIMEOUT_MS = 60_000;
 
 interface SubstepIn {
   id: string;
@@ -162,12 +167,21 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
     const totalSubsteps = input.steps.reduce((n, s) => n + s.substeps.length, 0);
     logStage(sopId, "claude_start", { steps: input.steps.length, substeps: totalSubsteps });
 
-    const res = await client.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      system,
-      messages: [{ role: "user", content: `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}` }],
-    });
+    let res;
+    try {
+      res = await client.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 16000,
+          system,
+          messages: [{ role: "user", content: `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}` }],
+        },
+        { signal: AbortSignal.timeout(CLAUDE_TIMEOUT_MS) },
+      );
+    } catch (err: any) {
+      logStage(sopId, "claude_error", { msg: String(err?.message ?? err), name: err?.name ?? "" });
+      throw err;
+    }
 
     const raw = res.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
