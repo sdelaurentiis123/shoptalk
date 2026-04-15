@@ -64,23 +64,29 @@ function hashEnglish(input: SopIn): string {
   return h.digest("hex");
 }
 
+function logStage(sopId: string, stage: string, extra?: Record<string, unknown>) {
+  const bits = [`sopId=${sopId}`, `stage=${stage}`];
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) bits.push(`${k}=${JSON.stringify(v)}`);
+  }
+  console.log(`[translate] ${bits.join(" ")}`);
+}
+
 export async function markTranslationPending(admin: SupabaseClient, sopId: string) {
   await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
 }
 
 /**
- * Reads the SOP + steps + substeps, translates via Claude, writes the `_es`
- * columns back. Skips entirely if the English hash hasn't changed since the
- * last successful translation. Sets `translation_status` and `english_hash`.
+ * Translates SOP English content to Spanish via Claude and writes the `_es`
+ * columns. Skips entirely when the English hash hasn't changed since the last
+ * successful run. Writes step/substep rows in parallel (one `.update()` per
+ * row, fired concurrently) and then flips the sops row atomically to status=
+ * ready + new hash in a single update.
  *
- * Writes are batched into three calls total:
- *   1. one upsert for all step translations
- *   2. one upsert for all substep translations
- *   3. one update on the sops row that atomically sets the Spanish fields
- *      AND flips translation_status='ready' AND stores the new hash
- *
- * If the serverless function is killed after step 3 returns we're still safe;
- * if it dies mid-sequence, the next trigger will re-run and finish.
+ * Why .update() not .upsert(): upsert goes INSERT-first in Postgres and
+ * validates NOT NULL on all target columns. Our patch payload only carries
+ * _es fields, so upsert fails on sop_id/sort_order/title. .update() has no
+ * such issue.
  */
 export async function translateSop(admin: SupabaseClient, sopId: string): Promise<void> {
   const { data: sop, error } = await admin
@@ -107,7 +113,13 @@ export async function translateSop(admin: SupabaseClient, sopId: string): Promis
   };
 
   const newHash = hashEnglish(input);
+  logStage(sopId, "start", {
+    hash_old: (sop.english_hash ?? "").slice(0, 8),
+    hash_new: newHash.slice(0, 8),
+  });
+
   if (newHash === sop.english_hash && sop.translation_status === "ready") {
+    logStage(sopId, "skip_unchanged");
     return;
   }
 
@@ -116,6 +128,7 @@ export async function translateSop(admin: SupabaseClient, sopId: string): Promis
       .from("sops")
       .update({ translation_status: "ready", english_hash: newHash })
       .eq("id", sopId);
+    logStage(sopId, "empty_done");
     return;
   }
 
@@ -146,13 +159,14 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
   ]
 }`;
 
-    const userContent = `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}`;
+    const totalSubsteps = input.steps.reduce((n, s) => n + s.substeps.length, 0);
+    logStage(sopId, "claude_start", { steps: input.steps.length, substeps: totalSubsteps });
 
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 16000,
       system,
-      messages: [{ role: "user", content: userContent }],
+      messages: [{ role: "user", content: `English SOP to translate:\n\n${JSON.stringify(input, null, 2)}` }],
     });
 
     const raw = res.content
@@ -160,11 +174,11 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
       .map((b) => b.text)
       .join("");
     if (!raw) throw new Error("empty Claude response");
+    logStage(sopId, "claude_done", { chars: raw.length });
 
     const parsed: Translated = JSON.parse(trimJson(raw));
 
-    // Build per-row lookups so we can emit batched upserts (one round-trip
-    // for every steps, one for every substeps — regardless of SOP size).
+    // Build per-row lookups from the Claude response.
     const stepById = new Map(parsed.steps.map((s) => [s.id, s]));
     const stepPatches: { id: string; title_es: string; description_es: string }[] = [];
     const substepPatches: { id: string; text_es: string }[] = [];
@@ -182,19 +196,35 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
       }
     }
 
+    // Parallel per-row updates. Postgres handles these independently; wall
+    // time ≈ one round-trip regardless of count.
     if (stepPatches.length > 0) {
-      const { error: sErr } = await admin.from("steps").upsert(stepPatches, { onConflict: "id" });
-      if (sErr) throw new Error(`steps upsert: ${sErr.message}`);
-    }
-    if (substepPatches.length > 0) {
-      const { error: ssErr } = await admin
-        .from("substeps")
-        .upsert(substepPatches, { onConflict: "id" });
-      if (ssErr) throw new Error(`substeps upsert: ${ssErr.message}`);
+      const stepResults = await Promise.all(
+        stepPatches.map((p) =>
+          admin
+            .from("steps")
+            .update({ title_es: p.title_es, description_es: p.description_es })
+            .eq("id", p.id),
+        ),
+      );
+      const stepErr = stepResults.find((r) => r.error)?.error;
+      if (stepErr) throw new Error(`steps update: ${stepErr.message}`);
+      logStage(sopId, "steps_updated", { rows: stepPatches.length });
     }
 
-    // Atomic finish: Spanish SOP fields + status='ready' + new hash, all in one.
-    await admin
+    if (substepPatches.length > 0) {
+      const ssResults = await Promise.all(
+        substepPatches.map((p) =>
+          admin.from("substeps").update({ text_es: p.text_es }).eq("id", p.id),
+        ),
+      );
+      const ssErr = ssResults.find((r) => r.error)?.error;
+      if (ssErr) throw new Error(`substeps update: ${ssErr.message}`);
+      logStage(sopId, "substeps_updated", { rows: substepPatches.length });
+    }
+
+    // Atomic finish: Spanish SOP fields + status=ready + hash in one call.
+    const { error: finalErr } = await admin
       .from("sops")
       .update({
         title_es: parsed.title_es ?? "",
@@ -205,7 +235,10 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
         updated_at: new Date().toISOString(),
       })
       .eq("id", sopId);
-  } catch (e) {
+    if (finalErr) throw new Error(`sops final update: ${finalErr.message}`);
+    logStage(sopId, "final_update_ok");
+  } catch (e: any) {
+    logStage(sopId, "error", { msg: String(e?.message ?? e) });
     console.error("[translate] failed:", e);
     await admin.from("sops").update({ translation_status: "failed" }).eq("id", sopId);
     throw e;

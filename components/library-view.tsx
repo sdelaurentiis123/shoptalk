@@ -34,6 +34,13 @@ export default function LibraryView({
     setSops(initial);
   }, [initial]);
 
+  // On mount: nudge the server to heal any stuck-pending translations.
+  // Fire-and-forget; no-op 99% of the time.
+  useEffect(() => {
+    if (role !== "admin") return;
+    fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
+  }, [role]);
+
   // If any SOP is still translating, poll the route's server components every
   // few seconds so the badge clears and Spanish content lands without a manual
   // refresh.
@@ -43,6 +50,52 @@ export default function LibraryView({
     const id = setInterval(() => router.refresh(), 4000);
     return () => clearInterval(id);
   }, [anyPending, router]);
+
+  // Per-SOP stall detection: mark any SOP whose pending state persists for
+  // >90s as stalled in local state (shows a distinct pill + retry).
+  const [stalledIds, setStalledIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const now = Date.now();
+    for (const s of sops) {
+      if (s.translation_status !== "pending") continue;
+      if (stalledIds.has(s.id)) continue;
+      const age = now - new Date(s.updated_at).getTime();
+      const remaining = Math.max(0, 90000 - age);
+      if (remaining === 0) {
+        setStalledIds((prev) => new Set(prev).add(s.id));
+      } else {
+        timers.push(
+          setTimeout(() => {
+            setStalledIds((prev) => new Set(prev).add(s.id));
+          }, remaining),
+        );
+      }
+    }
+    // Drop any ids that are no longer pending.
+    setStalledIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        const still = sops.find((s) => s.id === id);
+        if (still && still.translation_status === "pending") next.add(id);
+      }
+      return next;
+    });
+    return () => timers.forEach((tm) => clearTimeout(tm));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sops]);
+
+  async function retrySop(e: React.MouseEvent, sopId: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    await fetch(`/api/sops/${sopId}/translate`, { method: "POST" }).catch(() => {});
+    setStalledIds((prev) => {
+      const next = new Set(prev);
+      next.delete(sopId);
+      return next;
+    });
+    router.refresh();
+  }
 
   async function deleteSop(e: React.MouseEvent, sop: Sop) {
     e.stopPropagation();
@@ -107,11 +160,19 @@ export default function LibraryView({
             <div className="flex justify-between items-baseline mb-1 pr-8 gap-3">
               <span className="text-[15px] font-semibold">{pickI18n(sop, "title", lang)}</span>
               <div className="flex items-center gap-2 flex-shrink-0">
-                {sop.translation_status === "pending" && (
+                {sop.translation_status === "pending" && !stalledIds.has(sop.id) && (
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary bg-primary-bg px-2 py-0.5 rounded-full">
                     <span className="w-2 h-2 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                     {t(lang, "translatingBadge")}
                   </span>
+                )}
+                {sop.translation_status === "pending" && stalledIds.has(sop.id) && (
+                  <button
+                    onClick={(e) => retrySop(e, sop.id)}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-warning bg-warning-bg px-2 py-0.5 rounded-full hover:text-white hover:bg-warning transition"
+                  >
+                    {t(lang, "translationStalledBadge")} · {t(lang, "retryNow")}
+                  </button>
                 )}
                 {sop.status === "draft" && <span className="text-[11px] font-medium text-warning">{t(lang, "draft")}</span>}
                 {sop.status === "archived" && <span className="text-[11px] font-medium text-text-tertiary">{t(lang, "archived")}</span>}

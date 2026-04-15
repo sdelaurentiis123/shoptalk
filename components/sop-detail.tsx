@@ -59,14 +59,29 @@ export default function SopDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sop.id, isVideo]);
 
-  // While a translation is in flight, refresh the page every few seconds so
-  // the Spanish fields flip in the moment they're ready. Stops once status is
-  // no longer "pending".
+  // On mount: nudge server to heal any stuck-pending translations.
   useEffect(() => {
+    if (role !== "admin") return;
+    fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
+  }, [role]);
+
+  // Track how long the current pending state has lasted. After 90s we stop
+  // polling and flip the UI to a "stalled" message with an inline retry.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    setStalled(false);
     if (translationStatus !== "pending") return;
+    const stall = setTimeout(() => setStalled(true), 90000);
+    return () => clearTimeout(stall);
+  }, [translationStatus, sop.id]);
+
+  // While a translation is in flight AND not yet stalled, refresh every few
+  // seconds so Spanish flips in the moment it's ready.
+  useEffect(() => {
+    if (translationStatus !== "pending" || stalled) return;
     const id = setInterval(() => router.refresh(), 4000);
     return () => clearInterval(id);
-  }, [translationStatus, router]);
+  }, [translationStatus, stalled, router]);
 
   // Auto-scroll active step when video time changes.
   useEffect(() => {
@@ -197,15 +212,34 @@ export default function SopDetail({
 
   return (
     <div className="max-w-[1100px] mx-auto px-7 py-6">
-      {isTranslating && (
+      {isTranslating && !stalled && (
         <div className="mb-4 px-4 py-2.5 rounded-lg bg-primary-bg border border-primary/20 text-[12px] text-primary flex items-center gap-2">
           <span className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           {t(lang, "translatingSop")}
         </div>
       )}
+      {isTranslating && stalled && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-warning-bg border border-warning/30 text-[12px] text-warning flex items-center gap-2 justify-between">
+          <span>{t(lang, "translationStalled")}</span>
+          <button
+            onClick={retranslate}
+            disabled={translating}
+            className="px-3 py-1 rounded-full bg-warning text-white text-[11px] font-medium disabled:opacity-60"
+          >
+            {translating ? t(lang, "translating") : t(lang, "retryNow")}
+          </button>
+        </div>
+      )}
       {lang === "es" && translationStatus === "failed" && (
-        <div className="mb-4 px-4 py-2.5 rounded-lg bg-danger-bg border border-danger/20 text-[12px] text-danger">
-          {t(lang, "translationFailed")}
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-danger-bg border border-danger/20 text-[12px] text-danger flex items-center gap-2 justify-between">
+          <span>{t(lang, "translationFailed")}</span>
+          <button
+            onClick={retranslate}
+            disabled={translating}
+            className="px-3 py-1 rounded-full bg-danger text-white text-[11px] font-medium disabled:opacity-60"
+          >
+            {translating ? t(lang, "translating") : t(lang, "retryNow")}
+          </button>
         </div>
       )}
       <div className="flex items-center justify-between mb-4">
