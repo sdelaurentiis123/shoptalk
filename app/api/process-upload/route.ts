@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { processWithGemini } from "@/lib/gemini";
+import { getObjectBuffer, presignGet } from "@/lib/r2";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -32,14 +33,22 @@ export async function POST(req: Request) {
     log("received", { storage_path, file_type });
     const admin = createAdminClient();
 
-    // Download from Storage.
-    const { data: blob, error: dlErr } = await admin.storage.from("sop-files").download(storage_path);
-    if (dlErr || !blob) return fail("download", dlErr?.message ?? "download failed");
-    const buf = Buffer.from(await blob.arrayBuffer());
+    // Download from R2.
+    let buf: Buffer;
+    try {
+      buf = await getObjectBuffer(storage_path);
+    } catch (e: any) {
+      return fail("download", e?.message ?? "download failed");
+    }
     log("downloaded", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
 
-    // Signed URL for playback in the UI.
-    const { data: signed } = await admin.storage.from("sop-files").createSignedUrl(storage_path, 60 * 60 * 24 * 7);
+    // R2 signed URL cached for a week; refreshed on SOP view anyway.
+    let signed_url: string | null = null;
+    try {
+      signed_url = await presignGet(storage_path, 60 * 60 * 24 * 7);
+    } catch (e) {
+      console.warn("[process-upload] presignGet failed (will re-sign on demand):", e);
+    }
 
     let gemini;
     try {
@@ -66,7 +75,7 @@ export async function POST(req: Request) {
         type: sopType,
         status: "draft",
         file_path: storage_path,
-        file_url: signed?.signedUrl ?? null,
+        file_url: signed_url,
         total_seconds: sopType === "video" ? (gemini.totalSeconds || 0) : 0,
         recorded_at: new Date().toISOString(),
       })

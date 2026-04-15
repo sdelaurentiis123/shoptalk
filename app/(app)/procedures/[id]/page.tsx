@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import SopDetail from "@/components/sop-detail";
+import { presignGet } from "@/lib/r2";
 import type { SopWithSteps } from "@/lib/types";
 
 export default async function SopPage({ params }: { params: { id: string } }) {
@@ -18,12 +18,14 @@ export default async function SopPage({ params }: { params: { id: string } }) {
     .maybeSingle();
   if (!sop) notFound();
 
-  // Re-sign file URL if missing or expired.
+  // Mint a fresh R2 signed GET URL for playback on every view.
   let signed = sop.file_url as string | null;
   if (sop.file_path) {
-    const admin = createAdminClient();
-    const { data } = await admin.storage.from("sop-files").createSignedUrl(sop.file_path, 60 * 60 * 24);
-    signed = data?.signedUrl ?? signed;
+    try {
+      signed = await presignGet(sop.file_path, 60 * 60);
+    } catch (e) {
+      console.error("[sop-detail] presignGet failed:", e);
+    }
   }
 
   const full = { ...sop, file_url: signed } as SopWithSteps;

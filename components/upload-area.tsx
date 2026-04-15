@@ -2,7 +2,60 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+
+const MAX_PARALLEL = 3;
+const MAX_PART_RETRIES = 3;
+
+type StartResp = {
+  key: string;
+  upload_id: string;
+  part_size: number;
+  parts: { partNumber: number; url: string }[];
+};
+
+function putPart(url: string, blob: Blob, onBytes: (delta: number) => void, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    let last = 0;
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const delta = e.loaded - last;
+      last = e.loaded;
+      onBytes(delta);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader("ETag") || xhr.getResponseHeader("etag");
+        if (!etag) return reject(new Error("no ETag returned"));
+        resolve(etag.replace(/"/g, ""));
+      } else reject(new Error(`part PUT ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.onabort = () => reject(new Error("aborted"));
+    signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(blob);
+  });
+}
+
+async function putPartWithRetry(
+  url: string,
+  blob: Blob,
+  onBytes: (delta: number) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  let lastErr: unknown;
+  for (let i = 0; i < MAX_PART_RETRIES; i++) {
+    try {
+      return await putPart(url, blob, onBytes, signal);
+    } catch (e) {
+      lastErr = e;
+      if (signal?.aborted) throw e;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
 
 export default function UploadArea({
   facilityId,
@@ -11,15 +64,20 @@ export default function UploadArea({
   facilityId: string;
   stationId?: string | null;
 }) {
+  // facilityId unused on the client now (server derives it), but kept for API symmetry.
+  void facilityId;
   const fileRef = useRef<HTMLInputElement>(null);
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState(0);
+  const [speed, setSpeed] = useState("");
   const [error, setError] = useState("");
   const router = useRouter();
+  const abortRef = useRef<AbortController | null>(null);
 
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
+  async function handleFile(maybeFile: File | undefined) {
+    if (!maybeFile) return;
+    const file: File = maybeFile;
     const isVideo = file.type.startsWith("video/");
     const isPdf = file.type === "application/pdf";
     const isImg = file.type.startsWith("image/");
@@ -30,45 +88,109 @@ export default function UploadArea({
     setProcessing(true);
     setError("");
     setProgress(0);
-    setStatus(`Uploading ${(file.size / 1024 / 1024).toFixed(1)} MB…`);
+    setSpeed("");
+    setStatus(`Preparing upload (${(file.size / 1024 / 1024).toFixed(1)} MB)…`);
+    abortRef.current = new AbortController();
 
     try {
-      const supabase = createClient();
-      const ext = file.name.split(".").pop() || "bin";
-      const storagePath = `${facilityId}/${crypto.randomUUID()}.${ext}`;
+      // 1. Start multipart.
+      const startRes = await fetch("/api/uploads/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_name: file.name, file_type: file.type, file_size: file.size }),
+      });
+      const start: StartResp | { error: string } = await startRes.json();
+      if (!startRes.ok) throw new Error(("error" in start ? start.error : "start failed") as string);
+      const { key, upload_id, part_size, parts } = start as StartResp;
 
-      // Direct browser → Supabase Storage. Chunked internally; bypasses Next.js.
-      const { error: upErr } = await supabase.storage
-        .from("sop-files")
-        .upload(storagePath, file, { contentType: file.type, upsert: false });
-      if (upErr) throw new Error(upErr.message);
+      // 2. Upload parts in parallel, max MAX_PARALLEL at a time.
+      setStatus(`Uploading 0 / ${parts.length} parts…`);
+      const totalBytes = file.size;
+      let uploadedBytes = 0;
+      const startTs = Date.now();
 
+      function onBytes(delta: number) {
+        uploadedBytes += delta;
+        const pct = Math.min(99, Math.floor((uploadedBytes / totalBytes) * 100));
+        setProgress(pct);
+        const elapsed = (Date.now() - startTs) / 1000;
+        if (elapsed > 1) {
+          const mbps = uploadedBytes / 1024 / 1024 / elapsed;
+          setSpeed(`${mbps.toFixed(1)} MB/s`);
+        }
+      }
+
+      const etags: { partNumber: number; etag: string }[] = new Array(parts.length);
+      let done = 0;
+      let cursor = 0;
+
+      async function worker() {
+        while (true) {
+          const i = cursor++;
+          if (i >= parts.length) return;
+          const p = parts[i];
+          const offset = (p.partNumber - 1) * part_size;
+          const slice = file.slice(offset, Math.min(offset + part_size, file.size));
+          const etag = await putPartWithRetry(p.url, slice, onBytes, abortRef.current?.signal);
+          etags[i] = { partNumber: p.partNumber, etag };
+          done++;
+          setStatus(`Uploading ${done} / ${parts.length} parts…`);
+        }
+      }
+
+      try {
+        await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, parts.length) }, worker));
+      } catch (e) {
+        // Best-effort abort of the multipart upload.
+        fetch("/api/uploads/abort", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, upload_id }),
+        }).catch(() => {});
+        throw e;
+      }
+
+      // 3. Complete.
+      setStatus("Finalizing upload…");
+      const compRes = await fetch("/api/uploads/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, upload_id, parts: etags }),
+      });
+      const comp = await compRes.json();
+      if (!compRes.ok) throw new Error(comp.error || "complete failed");
+
+      // 4. Kick off Gemini processing.
+      setProgress(100);
+      setSpeed("");
       setStatus(isVideo ? "Analyzing video with Gemini…" : "Analyzing document with Gemini…");
-      setProgress(60);
-
-      const res = await fetch("/api/process-upload", {
+      const procRes = await fetch("/api/process-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          storage_path: storagePath,
+          storage_path: key,
           file_type: file.type,
           file_name: file.name,
           station_id: stationId ?? null,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "processing failed");
+      const proc = await procRes.json();
+      if (!procRes.ok) throw new Error(proc.error || "processing failed");
 
-      setProgress(100);
       setStatus("");
       setProcessing(false);
-      router.push(`/procedures/${data.sop.id}`);
+      router.push(`/procedures/${proc.sop.id}`);
       router.refresh();
     } catch (e: any) {
-      setError(e.message);
+      setError(e?.message ?? String(e));
       setProcessing(false);
       setStatus("");
+      setSpeed("");
     }
+  }
+
+  function cancel() {
+    abortRef.current?.abort();
   }
 
   return (
@@ -109,8 +231,8 @@ export default function UploadArea({
           <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           <div className="flex-1">
             <div className="text-[14px] font-medium">{status}</div>
-            <div className="text-[12px] text-text-tertiary mt-0.5">
-              This may take a moment for longer videos.
+            <div className="text-[12px] text-text-tertiary mt-0.5 tabular-nums">
+              {progress}%{speed ? ` · ${speed}` : ""} · This may take a moment for longer videos.
             </div>
             {progress > 0 && progress < 100 && (
               <div className="h-1 bg-background rounded-full mt-2 overflow-hidden">
@@ -118,6 +240,9 @@ export default function UploadArea({
               </div>
             )}
           </div>
+          <button onClick={cancel} className="text-[12px] text-text-tertiary hover:text-danger">
+            Cancel
+          </button>
         </div>
       )}
       {error && (
