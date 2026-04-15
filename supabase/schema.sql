@@ -36,6 +36,7 @@ create table if not exists sops (
   description_es text default '',
   transcript_es text default '',
   translation_status text default 'ready' check (translation_status in ('pending','ready','failed')),
+  translation_claimed_at timestamptz,
   english_hash text default '',
   created_at timestamptz default now(),
   updated_at timestamptz default now()

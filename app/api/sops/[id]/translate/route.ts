@@ -18,13 +18,14 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     .maybeSingle();
   if (!sop || sop.facility_id !== facilityId) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Force re-translation: clear the hash so translateSop doesn't short-circuit.
+  // Force re-translation: clear english_hash so translateSop's skip-if-
+  // unchanged check doesn't short-circuit. We deliberately do NOT touch
+  // updated_at — the claim inside translateSop owns that bump.
   await admin
     .from("sops")
-    .update({ english_hash: "", translation_status: "pending", updated_at: new Date().toISOString() })
+    .update({ english_hash: "", translation_status: "pending" })
     .eq("id", params.id);
 
-  // Run synchronously so the function stays alive until Claude returns.
   try {
     await translateSop(admin, params.id);
     return NextResponse.json({ ok: true, status: "ready" });

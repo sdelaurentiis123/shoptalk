@@ -81,16 +81,18 @@ export async function markTranslationPending(admin: SupabaseClient, sopId: strin
   await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
 }
 
-// Race-free single-flight claim. Returns true if THIS caller owns the run.
-// Any concurrent caller that arrives while the claim is fresh (<30s since
-// this row's updated_at) loses and returns false so it can skip the work.
+const CLAIM_TTL_MS = 90_000;
+
+// Race-free single-flight claim. Uses a dedicated `translation_claimed_at`
+// column so arbitrary sops.updated_at bumps from unrelated edits don't
+// interfere. Returns true if THIS caller owns the run.
 async function tryClaim(admin: SupabaseClient, sopId: string): Promise<boolean> {
-  const cutoff = new Date(Date.now() - 30_000).toISOString();
+  const cutoff = new Date(Date.now() - CLAIM_TTL_MS).toISOString();
   const { data } = await admin
     .from("sops")
-    .update({ translation_status: "pending", updated_at: new Date().toISOString() })
+    .update({ translation_status: "pending", translation_claimed_at: new Date().toISOString() })
     .eq("id", sopId)
-    .or(`translation_status.neq.pending,updated_at.lt.${cutoff}`)
+    .or(`translation_claimed_at.is.null,translation_claimed_at.lt.${cutoff}`)
     .select("id")
     .maybeSingle();
   return !!data;
@@ -251,7 +253,7 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
       logStage(sopId, "substeps_updated", { rows: substepPatches.length });
     }
 
-    // Atomic finish: Spanish SOP fields + status=ready + hash in one call.
+    // Atomic finish: Spanish SOP fields + status=ready + hash + claim release.
     const { error: finalErr } = await admin
       .from("sops")
       .update({
@@ -259,6 +261,7 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
         description_es: parsed.description_es ?? "",
         transcript_es: parsed.transcript_es ?? "",
         translation_status: "ready",
+        translation_claimed_at: null,
         english_hash: newHash,
         updated_at: new Date().toISOString(),
       })
@@ -268,7 +271,10 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
   } catch (e: any) {
     logStage(sopId, "error", { msg: String(e?.message ?? e) });
     console.error("[translate] failed:", e);
-    await admin.from("sops").update({ translation_status: "failed" }).eq("id", sopId);
+    await admin
+      .from("sops")
+      .update({ translation_status: "failed", translation_claimed_at: null })
+      .eq("id", sopId);
     throw e;
   }
 }

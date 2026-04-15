@@ -15,29 +15,26 @@ export async function POST() {
   const admin = createAdminClient();
   const cutoffIso = new Date(Date.now() - STALE_SECONDS * 1000).toISOString();
 
-  // Atomic claim: mark any stale-pending row "fresh pending" and return its id.
-  // Race-safe — concurrent healers both run this; only one gets rows back per
-  // stale SOP because updated_at gets bumped on the first call.
-  const { data: claimed, error } = await admin
+  // Find every pending SOP in this facility whose translation claim has
+  // gone stale (or was never set). translateSop's own tryClaim handles
+  // race-safe ownership; the healer just surfaces orphans.
+  const { data: stale, error } = await admin
     .from("sops")
-    .update({ updated_at: new Date().toISOString() })
+    .select("id")
     .eq("facility_id", facilityId)
     .eq("translation_status", "pending")
-    .lt("updated_at", cutoffIso)
-    .select("id");
+    .or(`translation_claimed_at.is.null,translation_claimed_at.lt.${cutoffIso}`);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const ids = (claimed ?? []).map((r) => r.id as string);
-
-  // Await the translation synchronously so the serverless function stays alive
-  // for the full duration of the Claude call. Client fires this POST
-  // fire-and-forget, so it doesn't care how long this response takes.
+  const ids = (stale ?? []).map((r) => r.id as string);
+  let healed = 0;
   for (const id of ids) {
     try {
       await translateSop(admin, id);
+      healed++;
     } catch (e) {
       console.error("[translate-stale] sop", id, "failed:", e);
     }
   }
-  return NextResponse.json({ ok: true, healed: ids.length });
+  return NextResponse.json({ ok: true, healed });
 }
