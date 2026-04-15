@@ -59,9 +59,12 @@ export default function SopDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sop.id, isVideo]);
 
-  // On mount: nudge server to heal any stuck-pending translations.
+  // On mount: nudge server to heal any stuck-pending translations. Sentinel
+  // prevents the strict-mode double-invocation + library remount from firing
+  // multiple concurrent healer calls.
   useEffect(() => {
-    if (role !== "admin") return;
+    if (role !== "admin" || (typeof window !== "undefined" && (window as any).__shoptalkHealerFired)) return;
+    if (typeof window !== "undefined") (window as any).__shoptalkHealerFired = true;
     fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
   }, [role]);
 

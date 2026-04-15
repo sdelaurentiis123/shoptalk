@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+
+// Fire /api/translate-stale at most once per SPA session. Shared with
+// sop-detail via a window-level sentinel so library + detail mounts don't
+// both trigger the healer when the user navigates between them.
 import type { Sop, Station, LangCode } from "@/lib/types";
 import { fmtTime } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -35,9 +39,10 @@ export default function LibraryView({
   }, [initial]);
 
   // On mount: nudge the server to heal any stuck-pending translations.
-  // Fire-and-forget; no-op 99% of the time.
   useEffect(() => {
-    if (role !== "admin") return;
+    if (role !== "admin" || typeof window === "undefined") return;
+    if ((window as any).__shoptalkHealerFired) return;
+    (window as any).__shoptalkHealerFired = true;
     fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
   }, [role]);
 

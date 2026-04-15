@@ -81,6 +81,21 @@ export async function markTranslationPending(admin: SupabaseClient, sopId: strin
   await admin.from("sops").update({ translation_status: "pending" }).eq("id", sopId);
 }
 
+// Race-free single-flight claim. Returns true if THIS caller owns the run.
+// Any concurrent caller that arrives while the claim is fresh (<30s since
+// this row's updated_at) loses and returns false so it can skip the work.
+async function tryClaim(admin: SupabaseClient, sopId: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - 30_000).toISOString();
+  const { data } = await admin
+    .from("sops")
+    .update({ translation_status: "pending", updated_at: new Date().toISOString() })
+    .eq("id", sopId)
+    .or(`translation_status.neq.pending,updated_at.lt.${cutoff}`)
+    .select("id")
+    .maybeSingle();
+  return !!data;
+}
+
 /**
  * Translates SOP English content to Spanish via Claude and writes the `_es`
  * columns. Skips entirely when the English hash hasn't changed since the last
@@ -94,6 +109,13 @@ export async function markTranslationPending(admin: SupabaseClient, sopId: strin
  * such issue.
  */
 export async function translateSop(admin: SupabaseClient, sopId: string): Promise<void> {
+  // Single-flight. If another run has claimed this SOP in the last 30s, skip.
+  const owned = await tryClaim(admin, sopId);
+  if (!owned) {
+    logStage(sopId, "skip_claim_held");
+    return;
+  }
+
   const { data: sop, error } = await admin
     .from("sops")
     .select("id, title, description, transcript, english_hash, translation_status, steps(id, title, description, sort_order, substeps(id, text, sort_order))")
@@ -210,30 +232,22 @@ Return ONLY valid JSON, no markdown, no commentary, this exact schema:
       }
     }
 
-    // Parallel per-row updates. Postgres handles these independently; wall
-    // time ≈ one round-trip regardless of count.
+    // Batch updates via SQL RPC: one statement per table, regardless of row
+    // count. Avoids undici connection-pool overload we were hitting with
+    // parallel per-row UPDATEs.
     if (stepPatches.length > 0) {
-      const stepResults = await Promise.all(
-        stepPatches.map((p) =>
-          admin
-            .from("steps")
-            .update({ title_es: p.title_es, description_es: p.description_es })
-            .eq("id", p.id),
-        ),
-      );
-      const stepErr = stepResults.find((r) => r.error)?.error;
-      if (stepErr) throw new Error(`steps update: ${stepErr.message}`);
+      const { error: rpcErr } = await admin.rpc("apply_step_translations", {
+        patches: stepPatches,
+      });
+      if (rpcErr) throw new Error(`steps update: ${rpcErr.message}`);
       logStage(sopId, "steps_updated", { rows: stepPatches.length });
     }
 
     if (substepPatches.length > 0) {
-      const ssResults = await Promise.all(
-        substepPatches.map((p) =>
-          admin.from("substeps").update({ text_es: p.text_es }).eq("id", p.id),
-        ),
-      );
-      const ssErr = ssResults.find((r) => r.error)?.error;
-      if (ssErr) throw new Error(`substeps update: ${ssErr.message}`);
+      const { error: rpcErr } = await admin.rpc("apply_substep_translations", {
+        patches: substepPatches,
+      });
+      if (rpcErr) throw new Error(`substeps update: ${rpcErr.message}`);
       logStage(sopId, "substeps_updated", { rows: substepPatches.length });
     }
 
