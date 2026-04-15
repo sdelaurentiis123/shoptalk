@@ -19,3 +19,23 @@ export function formatDate(d: string | Date | null | undefined) {
   const date = typeof d === "string" ? new Date(d) : d;
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+
+export function relativeTime(iso: string | null | undefined, lang: "en" | "es" = "en"): string {
+  if (!iso) return "";
+  const diff = Math.max(0, Date.now() - new Date(iso).getTime());
+  const mins = Math.floor(diff / 60000);
+  const hrs = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (lang === "es") {
+    if (mins < 1) return "ahora";
+    if (mins < 60) return `hace ${mins} min`;
+    if (hrs < 24) return `hace ${hrs} h`;
+    if (days < 7) return `hace ${days} d`;
+    return new Date(iso).toLocaleDateString("es-ES", { month: "short", day: "numeric" });
+  }
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins} min ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}

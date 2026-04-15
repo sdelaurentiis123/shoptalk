@@ -8,17 +8,19 @@ export default async function ChatPage() {
   if (!user || !role || !facilityId) redirect("/login");
   const supabase = createClient();
 
-  const [{ data: stations }, { data: sops }, { data: latest }] = await Promise.all([
+  const [{ data: stations }, { data: sops }, { data: conversations }] = await Promise.all([
     supabase.from("stations").select("*").eq("facility_id", facilityId).order("sort_order"),
     supabase.from("sops").select("id, title").eq("facility_id", facilityId).eq("status", "active"),
     supabase
       .from("conversations")
-      .select("id, station_id")
+      .select("id, title, station_id, updated_at")
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(100),
   ]);
+
+  const list = conversations ?? [];
+  const latest = list[0];
 
   let initialMessages: {
     id: string;
@@ -49,6 +51,7 @@ export default async function ChatPage() {
       lang={language}
       stations={stations ?? []}
       sopTitles={sopTitles}
+      conversations={list as any}
       initialMessages={initialMessages}
       initialConversationId={initialConversationId}
       initialStationId={initialStationId}
