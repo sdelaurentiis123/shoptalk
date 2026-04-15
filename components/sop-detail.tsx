@@ -35,6 +35,7 @@ export default function SopDetail({
   const [activeStep, setActiveStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [status, setStatus] = useState(sop.status);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -89,6 +90,18 @@ export default function SopDetail({
       setEditMode(false);
       router.refresh();
     }
+  }
+
+  async function retranslate() {
+    setTranslating(true);
+    const res = await fetch(`/api/sops/${sop.id}/translate`, { method: "POST" });
+    setTranslating(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "translate failed");
+      return;
+    }
+    router.refresh();
   }
 
   async function deleteSop() {
@@ -157,6 +170,16 @@ export default function SopDetail({
                   {t(lang, "archive")}
                 </button>
               </>
+            )}
+            {!editMode && (
+              <button
+                onClick={retranslate}
+                disabled={translating}
+                className="px-4 py-[7px] rounded-full border border-border text-[13px] text-text-secondary disabled:opacity-60"
+                title={t(lang, "retranslate")}
+              >
+                {translating ? t(lang, "translating") : t(lang, "retranslate")}
+              </button>
             )}
             <button
               onClick={() => setEditMode((v) => !v)}

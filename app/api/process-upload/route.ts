@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { processWithGemini } from "@/lib/gemini";
 import { getObjectBuffer, presignGet } from "@/lib/r2";
+import { translateSop } from "@/lib/translate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -123,6 +124,17 @@ export async function POST(req: Request) {
         const { error: ssErr } = await admin.from("substeps").insert(subs);
         if (ssErr) console.error("[process-upload] substep insert error:", ssErr);
       }
+    }
+
+    // Run Claude translation pass over the full saved English content so
+    // every _es column is filled reliably (Gemini tends to drop _es in nested
+    // arrays). Synchronous, ~3–5s, keeps upload end-to-end under a minute.
+    try {
+      log("translate:start");
+      await translateSop(admin, sop.id);
+      log("translate:done");
+    } catch (e: any) {
+      console.error("[process-upload] translate failed:", e?.message ?? e);
     }
 
     return NextResponse.json({ ok: true, sop });
