@@ -26,8 +26,8 @@ export default function PlatformClient({ facilities }: { facilities: Row[] }) {
         body: JSON.stringify({ facility_id: id }),
       });
       if (res.ok) {
-        router.refresh();
-        router.push("/procedures");
+        window.location.assign("/procedures");
+        return;
       }
       setBusyId(null);
     });

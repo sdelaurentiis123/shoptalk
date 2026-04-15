@@ -46,8 +46,7 @@ export default function WorkspaceSwitcher({
       });
       setOpen(false);
       if (res.ok) {
-        router.refresh();
-        router.push("/procedures");
+        window.location.assign("/procedures");
       }
     });
   }
