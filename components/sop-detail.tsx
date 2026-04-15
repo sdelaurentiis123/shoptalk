@@ -72,9 +72,19 @@ export default function SopDetail({
   }, [steps, activeStep, isVideo]);
 
   function jumpTo(sec: number) {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = sec;
-    videoRef.current.play().catch(() => {});
+    const v = videoRef.current;
+    if (!v) return;
+    // Hold play() until the browser has actually settled on the new position.
+    // Without this, files whose moov atom isn't at the front (most iPhone .mov
+    // uploads) will briefly play the originally-buffered segment before the
+    // seek resolves — feels like a 2s rewind.
+    const onSeeked = () => {
+      v.removeEventListener("seeked", onSeeked);
+      v.play().catch(() => {});
+    };
+    v.addEventListener("seeked", onSeeked);
+    v.pause();
+    v.currentTime = sec;
   }
 
   async function save() {
