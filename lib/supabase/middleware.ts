@@ -30,7 +30,7 @@ export async function updateSession(request: NextRequest) {
   const role = (user?.user_metadata as any)?.role as "admin" | "operator" | undefined;
 
   const path = request.nextUrl.pathname;
-  const publicPaths = ["/", "/login", "/signup", "/join"];
+  const publicPaths = ["/", "/login", "/signup", "/join", "/accept-invite"];
   const isPublic = publicPaths.includes(path) || path.startsWith("/api/") || path.startsWith("/_next");
 
   if (!user && !isPublic) {
