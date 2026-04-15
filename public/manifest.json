@@ -1,0 +1,9 @@
+{
+  "name": "ShopTalk",
+  "short_name": "ShopTalk",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#F5F5F7",
+  "theme_color": "#0071E3",
+  "icons": []
+}

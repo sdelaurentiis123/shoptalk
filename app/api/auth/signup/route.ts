@@ -1,0 +1,60 @@
+import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { generateJoinCode } from "@/lib/utils";
+
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => null);
+  const email = String(body?.email ?? "").trim();
+  const password = String(body?.password ?? "");
+  const facility_name = String(body?.facility_name ?? "").trim();
+  if (!email || !password || !facility_name) {
+    return NextResponse.json({ error: "missing fields" }, { status: 400 });
+  }
+  if (password.length < 8) {
+    return NextResponse.json({ error: "password must be at least 8 characters" }, { status: 400 });
+  }
+
+  const admin = createAdminClient();
+
+  // Create the admin user via the Admin API (bypasses email confirmation + disposable-domain checks).
+  const { data: created, error } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { role: "admin" },
+  });
+  if (error || !created?.user) {
+    console.error("[signup] createUser error:", error);
+    return NextResponse.json(
+      { error: error?.message ?? "signup failed", code: (error as any)?.code },
+      { status: 400 },
+    );
+  }
+  const data = { user: created.user };
+
+  // Generate unique join code.
+  let code = generateJoinCode(facility_name);
+  for (let i = 0; i < 5; i++) {
+    const { data: exists } = await admin.from("facilities").select("id").eq("join_code", code).maybeSingle();
+    if (!exists) break;
+    code = generateJoinCode(facility_name);
+  }
+
+  const { data: fac, error: fErr } = await admin
+    .from("facilities")
+    .insert({ name: facility_name, join_code: code, admin_user_id: data.user.id })
+    .select()
+    .single();
+  if (fErr) return NextResponse.json({ error: fErr.message }, { status: 500 });
+
+  // Seed default stations.
+  await admin.from("stations").insert(
+    ["Baking", "Packaging", "Mixing", "Sanitation"].map((name, i) => ({
+      facility_id: fac!.id,
+      name,
+      sort_order: i,
+    })),
+  );
+
+  return NextResponse.json({ ok: true, facility: fac });
+}

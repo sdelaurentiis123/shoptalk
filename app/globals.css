@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { background: #F5F5F7; color: #1D1D1F; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+* { -webkit-font-smoothing: antialiased; }
+
+.quick-scroll::-webkit-scrollbar { display: none; }
+.quick-scroll { scrollbar-width: none; }
+
+input, textarea, button { font-family: inherit; }
