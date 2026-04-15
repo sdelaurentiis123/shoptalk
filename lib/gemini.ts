@@ -52,11 +52,21 @@ EXTRACTION TARGETS:
 FIELD-LEVEL RULES:
 - title (overall): 3–6 words, action-led (e.g. "Revent Oven Manual Bake").
 - description (overall): one sentence describing what operator will accomplish.
-- totalSeconds: the exact runtime of the video. 0 for PDFs/images.
+- totalSeconds: the exact runtime of the video — the integer number of seconds from the first frame to the last frame. Measure this carefully; many downstream features depend on it being correct. 0 for PDFs/images.
 - per-step title: 3–6 words, imperative.
 - per-step description: one sentence, plain language.
 - For PDFs / images: startSeconds / endSeconds / timeSeconds are null. transcript is a page-by-page description of what's in the document instead of time-stamped.
 - Never invent content that isn't actually in the source. If the video never shows the actual temperature, don't make one up — write the substep as "Set the oven to the temperature specified in the shift batch sheet." Include only what's there.
+
+TIMESTAMP RULES — STRICT. Do not hallucinate.
+- Every startSeconds, endSeconds, and timeSeconds must be an INTEGER (whole seconds). Never a string like "0:12". Never a decimal.
+- Every timestamp must be ≥ 0 and ≤ totalSeconds. Never go past the end of the video.
+- startSeconds must be < endSeconds for each step.
+- Steps must not overlap in time. Step N's startSeconds ≥ step N-1's endSeconds.
+- timeSeconds for each substep must fall within its parent step's [startSeconds, endSeconds] range.
+- If you are uncertain of an exact second, round DOWN to the nearest second you actually observed — never extrapolate past observed content.
+- If a substep's precise moment cannot be observed, use the step's startSeconds rather than inventing a timestamp.
+- The transcript's [m:ss] markers must also respect totalSeconds and be monotonically non-decreasing.
 
 OUTPUT FORMAT:
 Return ONLY valid JSON, no markdown, no commentary, no fences. Every English text field has a Spanish sibling suffixed with _es. Schema:
@@ -90,6 +100,73 @@ Return ONLY valid JSON, no markdown, no commentary, no fences. Every English tex
 function parseJson(text: string): GeminiOut {
   const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
   return JSON.parse(cleaned);
+}
+
+// Accept an integer seconds, a "m:ss" / "h:mm:ss" string, or null. Returns
+// an integer clamped to [0, max], or null if the input can't be parsed.
+function coerceSeconds(value: unknown, max: number): number | null {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(max, Math.round(value)));
+  }
+  if (typeof value === "string") {
+    if (/^\d+$/.test(value.trim())) {
+      return Math.max(0, Math.min(max, parseInt(value.trim(), 10)));
+    }
+    const parts = value.trim().split(":").map((p) => parseInt(p, 10));
+    if (parts.every((n) => Number.isFinite(n))) {
+      let total = 0;
+      for (const n of parts) total = total * 60 + n;
+      return Math.max(0, Math.min(max, Math.round(total)));
+    }
+  }
+  return null;
+}
+
+/**
+ * Clamp timestamps against the measured video duration so Gemini hallucinations
+ * don't poison the DB: no negatives, no past-end values, start < end, substeps
+ * inside their parent step's window, steps non-overlapping.
+ */
+function sanitizeTimestamps(out: GeminiOut, mimeType: string): GeminiOut {
+  const isVideo = mimeType.startsWith("video/");
+  if (!isVideo) {
+    // Non-videos: drop any timestamps entirely.
+    return {
+      ...out,
+      totalSeconds: 0,
+      steps: (out.steps ?? []).map((s) => ({
+        ...s,
+        startSeconds: null,
+        endSeconds: null,
+        substeps: (s.substeps ?? []).map((ss) => ({ ...ss, timeSeconds: null })),
+      })),
+    };
+  }
+
+  const totalFromModel = coerceSeconds(out.totalSeconds, 24 * 60 * 60) ?? 0;
+  const total = totalFromModel > 0 ? totalFromModel : 0;
+
+  let lastEnd = 0;
+  const cleanedSteps = (out.steps ?? []).map((s) => {
+    let start = coerceSeconds((s as any).startSeconds, total) ?? lastEnd;
+    let end = coerceSeconds((s as any).endSeconds, total) ?? Math.min(start + 5, total);
+    // Keep steps ordered and non-overlapping.
+    if (start < lastEnd) start = lastEnd;
+    if (end <= start) end = Math.min(start + 1, Math.max(total, start + 1));
+    if (end > total && total > 0) end = total;
+    lastEnd = end;
+
+    const substeps = (s.substeps ?? []).map((ss) => {
+      let ts = coerceSeconds((ss as any).timeSeconds, total);
+      if (ts == null || ts < start || ts > end) ts = start;
+      return { ...ss, timeSeconds: ts };
+    });
+
+    return { ...s, startSeconds: start, endSeconds: end, substeps };
+  });
+
+  return { ...out, totalSeconds: total, steps: cleanedSteps };
 }
 
 async function uploadAndWait(buf: Buffer, mimeType: string, fileName: string) {
@@ -153,5 +230,6 @@ export async function processWithGemini(
 
   const text = response.text;
   if (!text) throw new Error("Gemini: empty response");
-  return parseJson(text);
+  const parsed = parseJson(text);
+  return sanitizeTimestamps(parsed, mimeType);
 }
