@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     }
     log("chunks-stored", chunks.length);
 
-    return NextResponse.json({ ok: true, session });
+    return NextResponse.json({ ok: true, session, chunksTotal: chunks.length });
   } catch (e: any) {
     console.error("[process-session] UNCAUGHT:", e);
     return NextResponse.json({ error: `unhandled: ${e?.message ?? String(e)}` }, { status: 500 });

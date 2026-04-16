@@ -159,7 +159,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         });
         if (!compRes.ok) throw new Error((await compRes.json()).error || "complete failed");
 
-        setUpload((u) => u ? { ...u, progress: 85, status: "Preparing for AI processing..." } : u);
+        setUpload((u) => u ? { ...u, progress: 80, status: "Splitting video for processing..." } : u);
 
         const endpoint = mode === "session" ? "/api/process-session" : "/api/process-upload";
         const procRes = await fetch(endpoint, {
@@ -170,12 +170,49 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const proc = await procRes.json();
         if (!procRes.ok) throw new Error(proc.error || "processing failed");
 
+        const parentId = mode === "session" ? proc.session?.id : proc.sop?.id;
+        const chunksTotal = proc.chunksTotal ?? 0;
+        const href = mode === "session" ? `/sessions/${parentId}` : `/procedures/${parentId}`;
+
+        if (chunksTotal === 0) {
+          // Non-video (PDF/image) — already processed inline.
+          setUpload(null);
+          addToast(mode === "session" ? "Session ready!" : "SOP ready!", { type: "success", action: { label: "View", href } });
+          router.push(href);
+          router.refresh();
+          return;
+        }
+
+        // Fire process-stale to kick off chunk processing.
+        setUpload((u) => u ? { ...u, progress: 82, status: `Processing chunk 0/${chunksTotal}...` } : u);
+        fetch("/api/process-stale", { method: "POST" }).catch(() => {});
+
+        // Poll for progress.
+        const poll = async (): Promise<void> => {
+          while (true) {
+            await new Promise((r) => setTimeout(r, 3000));
+            try {
+              const res = await fetch(`/api/processing-status?id=${parentId}&type=${mode === "session" ? "session" : "sop"}`);
+              const data = await res.json();
+              const pct = 82 + Math.floor(((data.chunksDone ?? 0) / Math.max(data.chunksTotal ?? 1, 1)) * 16);
+              setUpload((u) => u ? {
+                ...u,
+                progress: Math.min(pct, 98),
+                status: data.status === "ready"
+                  ? "Done!"
+                  : `Processing chunk ${data.chunksDone ?? 0}/${data.chunksTotal ?? chunksTotal}...`,
+              } : u);
+              if (data.status === "ready") return;
+              if (data.status === "failed") throw new Error("Processing failed");
+            } catch (e: any) {
+              if (e?.message === "Processing failed") throw e;
+            }
+          }
+        };
+
+        await poll();
         setUpload(null);
-        const href = mode === "session" ? `/sessions/${proc.session.id}` : `/procedures/${proc.sop.id}`;
-        addToast("Video uploaded. AI is processing in the background.", {
-          type: "info",
-          action: { label: "View", href },
-        });
+        addToast(mode === "session" ? "Session ready!" : "SOP ready!", { type: "success", action: { label: "View", href } });
         router.push(href);
         router.refresh();
       } catch (e: any) {

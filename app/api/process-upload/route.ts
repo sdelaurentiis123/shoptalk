@@ -120,7 +120,8 @@ export async function POST(req: Request) {
       await markTranslationPending(admin, sop.id);
     }
 
-    return NextResponse.json({ ok: true, sop });
+    const { data: chunkRows } = await admin.from("processing_chunks").select("id").eq("parent_id", sop.id);
+    return NextResponse.json({ ok: true, sop, chunksTotal: chunkRows?.length ?? 0 });
   } catch (e: any) {
     console.error("[process-upload] UNCAUGHT:", e);
     return NextResponse.json({ error: `unhandled: ${e?.message ?? String(e)}` }, { status: 500 });

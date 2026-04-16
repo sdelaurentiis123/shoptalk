@@ -11,6 +11,8 @@ import type { GeminiOut } from "@/lib/types";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const STALE_CLAIM_MS = 5 * 60 * 1000;
+
 function log(stage: string, extra?: unknown) {
   console.log(`[process-stale] ${stage}`, extra ?? "");
 }
@@ -22,32 +24,70 @@ export async function POST() {
 
   const admin = createAdminClient();
   let processed = 0;
+  const deadline = Date.now() + 250_000;
 
-  // Process pending chunks one at a time until none left or timeout approaching.
-  const deadline = Date.now() + 250_000; // leave 50s buffer
   while (Date.now() < deadline) {
-    const { data: chunk } = await admin
+    // Find the next chunk to process:
+    // - status is 'pending', OR 'processing' but stale (>5 min)
+    // - ALL chunks with a lower index for the same parent must be 'done'
+    const staleTs = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+
+    const { data: candidates } = await admin
       .from("processing_chunks")
       .select("*")
-      .eq("status", "pending")
+      .or(`status.eq.pending,and(status.eq.processing,created_at.lt.${staleTs})`)
       .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(10);
+
+    if (!candidates || candidates.length === 0) break;
+
+    // Find one where all prior chunks are done.
+    let chunk: any = null;
+    for (const c of candidates) {
+      if ((c.chunk_index as number) === 0) {
+        chunk = c;
+        break;
+      }
+      // Check all prior chunks for this parent are done.
+      const { data: priors } = await admin
+        .from("processing_chunks")
+        .select("status")
+        .eq("parent_id", c.parent_id)
+        .lt("chunk_index", c.chunk_index);
+      const allDone = priors?.every((p) => p.status === "done") ?? false;
+      if (allDone) {
+        chunk = c;
+        break;
+      }
+    }
 
     if (!chunk) break;
 
+    // Claim: atomic update from pending → processing.
+    const { data: claimed } = await admin
+      .from("processing_chunks")
+      .update({ status: "processing", created_at: new Date().toISOString() })
+      .eq("id", chunk.id)
+      .in("status", ["pending", "processing"])
+      .select("id")
+      .maybeSingle();
+
+    if (!claimed) continue; // Someone else claimed it.
+
     log("chunk", { parentType: chunk.parent_type, parentId: chunk.parent_id, index: chunk.chunk_index });
-    await admin.from("processing_chunks").update({ status: "processing" }).eq("id", chunk.id);
 
     try {
       const buf = await getObjectBuffer(chunk.file_path as string);
 
+      // Get all chunks for this parent (for T-1 context + finalization check).
       const { data: allChunks } = await admin
         .from("processing_chunks")
         .select("chunk_index, start_sec, duration_sec, transcript, status, parent_type")
         .eq("parent_id", chunk.parent_id)
         .order("chunk_index");
+      const totalChunks = allChunks?.length ?? 1;
 
+      // Build T-1 context.
       let prevContext: string | undefined;
       if ((chunk.chunk_index as number) > 0) {
         const prev = allChunks?.find((c) => c.chunk_index === (chunk.chunk_index as number) - 1);
@@ -63,7 +103,6 @@ export async function POST() {
       }
 
       const parentType = chunk.parent_type as "sop" | "session";
-      const totalChunks = allChunks?.length ?? 1;
       const prompt = parentType === "sop"
         ? SOP_PROMPT
         : sessionTranscriptPrompt(chunk.chunk_index as number, totalChunks, chunk.start_sec as number, chunk.duration_sec as number);
@@ -73,25 +112,32 @@ export async function POST() {
         prompt, thinkingLevel: "high", prevContext, timeoutMs: 240_000,
       });
 
-      await admin.from("processing_chunks").update({ transcript: result, status: "done" }).eq("id", chunk.id);
+      await admin.from("processing_chunks")
+        .update({ transcript: result, status: "done" })
+        .eq("id", chunk.id);
       processed++;
       log("chunk_done", { index: chunk.chunk_index });
 
-      // Check if all chunks for this parent are done → finalize.
-      const remaining = allChunks?.filter((c) => c.chunk_index !== chunk.chunk_index && c.status !== "done");
-      if (!remaining || remaining.length === 0) {
-        const doneChunks = [...(allChunks ?? []).filter((c) => c.chunk_index !== chunk.chunk_index), { ...chunk, transcript: result, status: "done" }]
-          .sort((a, b) => (a.chunk_index as number) - (b.chunk_index as number));
+      // Check if all chunks for this parent are now done.
+      const { data: freshChunks } = await admin
+        .from("processing_chunks")
+        .select("chunk_index, start_sec, duration_sec, transcript, status, parent_type")
+        .eq("parent_id", chunk.parent_id)
+        .order("chunk_index");
 
+      const allDone = freshChunks?.every((c) => c.status === "done") ?? false;
+      if (allDone && freshChunks && freshChunks.length > 0) {
         if (parentType === "session") {
-          await finalizeSession(admin, chunk.parent_id as string, doneChunks);
+          await finalizeSession(admin, chunk.parent_id as string, freshChunks);
         } else {
-          await finalizeSop(admin, chunk.parent_id as string, doneChunks);
+          await finalizeSop(admin, chunk.parent_id as string, freshChunks);
         }
       }
     } catch (e: any) {
       log("chunk_failed", { error: e?.message });
-      await admin.from("processing_chunks").update({ status: "failed", error: e?.message }).eq("id", chunk.id);
+      await admin.from("processing_chunks")
+        .update({ status: "failed", error: e?.message })
+        .eq("id", chunk.id);
     }
   }
 
