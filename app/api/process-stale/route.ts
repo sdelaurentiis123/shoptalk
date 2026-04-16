@@ -124,6 +124,7 @@ export async function POST(req: Request) {
       const mimeType = (chunk.file_path as string).endsWith(".mov") ? "video/quicktime" : "video/mp4";
       const result = await processWithGemini(buf, mimeType, `chunk_${chunk.chunk_index}`, {
         prompt, thinkingLevel: "high", prevContext, timeoutMs: 240_000,
+        maxDurationSec: chunk.duration_sec as number,
       });
 
       await admin.from("processing_chunks")

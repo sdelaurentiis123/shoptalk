@@ -128,7 +128,7 @@ function coerceSeconds(value: unknown, max: number): number | null {
  * don't poison the DB: no negatives, no past-end values, start < end, substeps
  * inside their parent step's window, steps non-overlapping.
  */
-function sanitizeTimestamps(out: GeminiOut, mimeType: string): GeminiOut {
+function sanitizeTimestamps(out: GeminiOut, mimeType: string, maxDuration?: number): GeminiOut {
   const isVideo = mimeType.startsWith("video/");
   if (!isVideo) {
     // Non-videos: drop any timestamps entirely.
@@ -145,10 +145,10 @@ function sanitizeTimestamps(out: GeminiOut, mimeType: string): GeminiOut {
   }
 
   const totalFromModel = coerceSeconds(out.totalSeconds, 24 * 60 * 60) ?? 0;
-  // When Gemini omits totalSeconds, don't collapse every timestamp to 0 — use
-  // a generous cap so later coerceSeconds() calls don't clamp valid values.
-  const total = totalFromModel > 0 ? totalFromModel : 24 * 60 * 60;
-  const hasReliableTotal = totalFromModel > 0;
+  // When a known chunk duration is provided, use it as the cap — Gemini often
+  // hallucinates totalSeconds beyond the actual clip length.
+  const total = maxDuration ?? (totalFromModel > 0 ? totalFromModel : 24 * 60 * 60);
+  const hasReliableTotal = maxDuration != null || totalFromModel > 0;
 
   let lastEnd = 0;
   const cleanedSteps = (out.steps ?? []).map((s) => {
@@ -326,6 +326,7 @@ export interface GeminiOpts {
   thinkingLevel?: string;
   prevContext?: string;
   timeoutMs?: number;
+  maxDurationSec?: number;
 }
 
 export async function processWithGemini(
@@ -383,5 +384,5 @@ export async function processWithGemini(
   if (!text) throw new Error("Gemini: empty response");
   const parsed = parseJson(text);
   const isSopPrompt = prompt === SOP_PROMPT;
-  return isSopPrompt ? sanitizeTimestamps(parsed, mimeType) : parsed;
+  return isSopPrompt ? sanitizeTimestamps(parsed, mimeType, opts?.maxDurationSec) : parsed;
 }

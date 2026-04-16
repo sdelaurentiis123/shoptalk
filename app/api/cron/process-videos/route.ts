@@ -102,6 +102,7 @@ export async function GET(req: Request) {
       thinkingLevel: "high",
       prevContext,
       timeoutMs: 240_000,
+      maxDurationSec: durationSec,
     });
 
     // Save transcript to the chunk row.

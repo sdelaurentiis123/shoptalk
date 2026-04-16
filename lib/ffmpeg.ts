@@ -3,12 +3,14 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { writeFile, readFile, unlink, readdir, mkdir } from "fs/promises";
 import { promisify } from "util";
-import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
-import ffprobeInstaller from "@ffprobe-installer/ffprobe";
+import ffmpegPath from "ffmpeg-static";
+// @ts-ignore — no types for ffprobe-static
+import ffprobeStatic from "ffprobe-static";
+const ffprobePath: string = ffprobeStatic.path;
 
 const exec = promisify(execFileCb);
-const FFMPEG = ffmpegInstaller.path;
-const FFPROBE = ffprobeInstaller.path;
+const FFMPEG = ffmpegPath!;
+const FFPROBE = ffprobePath;
 
 export interface VideoChunk {
   index: number;
