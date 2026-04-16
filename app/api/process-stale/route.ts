@@ -42,6 +42,11 @@ export async function POST(req: Request) {
 
     const { data: candidates } = await q;
 
+    log("loop_iter", {
+      candidateCount: candidates?.length ?? 0,
+      candidates: candidates?.map((c) => ({ index: c.chunk_index, status: c.status, id: (c.id as string).slice(0, 8) })),
+    });
+
     if (!candidates || candidates.length === 0) break;
 
     // Find one where all prior chunks are done.
@@ -64,7 +69,10 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!chunk) break;
+    if (!chunk) {
+      log("no_eligible_chunk", { candidates: candidates.map((c) => ({ index: c.chunk_index, status: c.status })) });
+      break;
+    }
 
     // Claim: atomic update from pending → processing.
     const { data: claimed } = await admin
@@ -75,7 +83,10 @@ export async function POST(req: Request) {
       .select("id")
       .maybeSingle();
 
-    if (!claimed) continue; // Someone else claimed it.
+    if (!claimed) {
+      log("claim_failed", { index: chunk.chunk_index });
+      continue;
+    } // Someone else claimed it.
 
     log("chunk", { parentType: chunk.parent_type, parentId: chunk.parent_id, index: chunk.chunk_index });
 
