@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fmtTime } from "@/lib/utils";
@@ -33,6 +33,10 @@ export default function SessionsClient({
   const [search, setSearch] = useState("");
   const [station, setStation] = useState("all");
   const [deleting, setDeleting] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/process-stale", { method: "POST" }).catch(() => {});
+  }, []);
 
   const filtered = useMemo(() => {
     let list = sessions;
