@@ -114,8 +114,7 @@ export default function SopDetail({
   // prevents the strict-mode double-invocation + library remount from firing
   // multiple concurrent healer calls.
   useEffect(() => {
-    if (role !== "admin" || (typeof window !== "undefined" && (window as any).__shoptalkHealerFired)) return;
-    if (typeof window !== "undefined") (window as any).__shoptalkHealerFired = true;
+    if (role !== "admin") return;
     fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
   }, [role]);
 
