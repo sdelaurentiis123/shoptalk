@@ -1,10 +1,14 @@
-import { execFile } from "child_process";
-import { tmpdir } from "os";
+import { execFile as execFileCb } from "child_process";
 import { join } from "path";
-import { writeFile, readFile, unlink, readdir } from "fs/promises";
+import { tmpdir } from "os";
+import { writeFile, readFile, unlink, readdir, mkdir } from "fs/promises";
 import { promisify } from "util";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 
-const exec = promisify(execFile);
+const exec = promisify(execFileCb);
+const FFMPEG = ffmpegInstaller.path;
+const FFPROBE = ffprobeInstaller.path;
 
 export interface VideoChunk {
   index: number;
@@ -13,13 +17,13 @@ export interface VideoChunk {
   buf: Buffer;
 }
 
-const CHUNK_DURATION_SEC = 90; // 1.5 minutes — Gemini loses timestamp accuracy on longer segments
+const CHUNK_DURATION_SEC = 90; // 1.5 minutes
 
 export async function getVideoDuration(buf: Buffer): Promise<number> {
   const tmp = join(tmpdir(), `probe-${crypto.randomUUID()}.mp4`);
   await writeFile(tmp, buf);
   try {
-    const { stdout } = await exec("ffprobe", [
+    const { stdout } = await exec(FFPROBE, [
       "-v", "quiet",
       "-print_format", "json",
       "-show_format",
@@ -42,13 +46,12 @@ export async function splitVideo(buf: Buffer, mimeType: string): Promise<VideoCh
 
   const ext = mimeType.includes("quicktime") ? "mov" : "mp4";
   const dir = join(tmpdir(), `split-${crypto.randomUUID()}`);
-  const { mkdir } = await import("fs/promises");
   await mkdir(dir, { recursive: true });
 
   const inputPath = join(dir, `input.${ext}`);
   await writeFile(inputPath, buf);
 
-  await exec("ffmpeg", [
+  await exec(FFMPEG, [
     "-i", inputPath,
     "-c", "copy",
     "-map", "0",
@@ -73,7 +76,6 @@ export async function splitVideo(buf: Buffer, mimeType: string): Promise<VideoCh
     });
   }
 
-  // Cleanup
   for (const f of await readdir(dir)) unlink(join(dir, f)).catch(() => {});
   unlink(dir).catch(() => {});
 

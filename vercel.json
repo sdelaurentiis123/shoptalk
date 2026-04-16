@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/translate",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-videos",
+      "schedule": "* * * * *"
     }
   ]
 }

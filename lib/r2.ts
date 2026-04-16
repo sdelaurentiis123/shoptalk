@@ -6,6 +6,7 @@ import {
   UploadPartCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -79,6 +80,10 @@ export async function getObjectBuffer(key: string): Promise<Buffer> {
   const stream = out.Body as unknown as AsyncIterable<Uint8Array>;
   for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
+}
+
+export async function putObject(key: string, body: Buffer, contentType: string) {
+  await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET(), Key: key, Body: body, ContentType: contentType }));
 }
 
 export async function deleteObject(key: string) {

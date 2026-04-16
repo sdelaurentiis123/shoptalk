@@ -159,8 +159,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         });
         if (!compRes.ok) throw new Error((await compRes.json()).error || "complete failed");
 
-        addToast("Video uploaded. Processing with AI...", { type: "info" });
-        setUpload((u) => u ? { ...u, progress: 85, status: "Processing with AI..." } : u);
+        setUpload((u) => u ? { ...u, progress: 85, status: "Preparing for AI processing..." } : u);
 
         const endpoint = mode === "session" ? "/api/process-session" : "/api/process-upload";
         const procRes = await fetch(endpoint, {
@@ -173,7 +172,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         setUpload(null);
         const href = mode === "session" ? `/sessions/${proc.session.id}` : `/procedures/${proc.sop.id}`;
-        addToast(mode === "session" ? "Session ready!" : "SOP ready!", { type: "success", action: { label: "View", href } });
+        addToast("Video uploaded. AI is processing in the background.", {
+          type: "info",
+          action: { label: "View", href },
+        });
         router.push(href);
         router.refresh();
       } catch (e: any) {
