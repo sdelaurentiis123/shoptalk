@@ -80,6 +80,12 @@ export default function SessionViewer({ session, topics, keyPoints, lang }: Prop
   const totalSeconds = session.total_seconds || 0;
 
   useEffect(() => {
+    if (session.processing_status !== "ready") {
+      fetch("/api/process-stale", { method: "POST" }).catch(() => {});
+    }
+  }, [session.processing_status]);
+
+  useEffect(() => {
     if (!session.file_url) return;
     const v = videoRef.current;
     if (v && v.src !== session.file_url) v.src = session.file_url;

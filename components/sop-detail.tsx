@@ -119,6 +119,11 @@ export default function SopDetail({
     fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
   }, [role]);
 
+  // Process any pending video chunks (fires every time detail page loads).
+  useEffect(() => {
+    fetch("/api/process-stale", { method: "POST" }).catch(() => {});
+  }, []);
+
   // Track how long the current pending state has lasted. After 90s we stop
   // polling and flip the UI to a "stalled" message with an inline retry.
   const [stalled, setStalled] = useState(false);
