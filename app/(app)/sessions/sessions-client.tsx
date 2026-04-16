@@ -34,9 +34,6 @@ export default function SessionsClient({
   const [station, setStation] = useState("all");
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/process-stale", { method: "POST" }).catch(() => {});
-  }, []);
 
   const filtered = useMemo(() => {
     let list = sessions;

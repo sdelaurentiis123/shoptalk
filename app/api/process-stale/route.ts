@@ -17,27 +17,30 @@ function log(stage: string, extra?: unknown) {
   console.log(`[process-stale] ${stage}`, extra ?? "");
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const { role, isPlatformAdmin } = await getAuthContext();
   if (role !== "admin" && !isPlatformAdmin)
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const parentId = (body as any)?.parentId as string | undefined;
 
   const admin = createAdminClient();
   let processed = 0;
   const deadline = Date.now() + 250_000;
 
   while (Date.now() < deadline) {
-    // Find the next chunk to process:
-    // - status is 'pending', OR 'processing' but stale (>5 min)
-    // - ALL chunks with a lower index for the same parent must be 'done'
     const staleTs = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
 
-    const { data: candidates } = await admin
+    let q = admin
       .from("processing_chunks")
       .select("*")
       .or(`status.eq.pending,and(status.eq.processing,created_at.lt.${staleTs})`)
       .order("created_at", { ascending: true })
       .limit(10);
+    if (parentId) q = q.eq("parent_id", parentId);
+
+    const { data: candidates } = await q;
 
     if (!candidates || candidates.length === 0) break;
 

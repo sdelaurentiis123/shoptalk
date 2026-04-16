@@ -44,7 +44,6 @@ export default function LibraryView({
     if ((window as any).__shoptalkHealerFired) return;
     (window as any).__shoptalkHealerFired = true;
     fetch("/api/translate-stale", { method: "POST" }).catch(() => {});
-    fetch("/api/process-stale", { method: "POST" }).catch(() => {});
   }, [role]);
 
   // If any SOP is still translating, poll the route's server components every

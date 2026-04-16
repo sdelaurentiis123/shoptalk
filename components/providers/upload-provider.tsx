@@ -183,9 +183,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Fire process-stale to kick off chunk processing.
+        // Fire process-stale to kick off chunk processing (scoped to this parent).
         setUpload((u) => u ? { ...u, progress: 82, status: `Processing chunk 0/${chunksTotal}...` } : u);
-        fetch("/api/process-stale", { method: "POST" }).catch(() => {});
+        fetch("/api/process-stale", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parentId }),
+        }).catch(() => {});
 
         // Poll for progress.
         const poll = async (): Promise<void> => {
