@@ -76,11 +76,13 @@ export async function POST(req: Request) {
       const chunks = await splitVideo(buf, file_type);
       log("split", { chunks: chunks.length });
 
+      let stored = 0;
       for (const chunk of chunks) {
         const chunkPath = `${facilityId}/chunks/${sop.id}_${chunk.index}.mp4`;
         await putObject(chunkPath, chunk.buf, file_type);
+        log("r2-stored", { index: chunk.index, path: chunkPath, sizeMB: +(chunk.buf.length / 1024 / 1024).toFixed(2) });
 
-        await admin.from("processing_chunks").insert({
+        const { error: insertErr } = await admin.from("processing_chunks").insert({
           parent_type: "sop",
           parent_id: sop.id,
           chunk_index: chunk.index,
@@ -89,8 +91,13 @@ export async function POST(req: Request) {
           file_path: chunkPath,
           status: "pending",
         });
+        if (insertErr) {
+          console.error("[process-upload] chunk insert failed:", { index: chunk.index, error: insertErr.message });
+          return fail("chunk-insert", `chunk ${chunk.index}: ${insertErr.message}`);
+        }
+        stored++;
       }
-      log("chunks-stored", chunks.length);
+      log("chunks-stored", { stored, total: chunks.length });
     } else {
       // Non-video (PDF/image): process inline since it's fast.
       const { processWithGemini } = await import("@/lib/gemini");

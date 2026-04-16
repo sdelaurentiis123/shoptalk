@@ -119,28 +119,34 @@ export async function POST(req: Request) {
         .update({ transcript: result, status: "done" })
         .eq("id", chunk.id);
       processed++;
-      log("chunk_done", { index: chunk.chunk_index });
-
-      // Check if all chunks for this parent are now done.
-      const { data: freshChunks } = await admin
-        .from("processing_chunks")
-        .select("chunk_index, start_sec, duration_sec, transcript, status, parent_type")
-        .eq("parent_id", chunk.parent_id)
-        .order("chunk_index");
-
-      const allDone = freshChunks?.every((c) => c.status === "done") ?? false;
-      if (allDone && freshChunks && freshChunks.length > 0) {
-        if (parentType === "session") {
-          await finalizeSession(admin, chunk.parent_id as string, freshChunks);
-        } else {
-          await finalizeSop(admin, chunk.parent_id as string, freshChunks);
-        }
-      }
+      log("chunk_done", { index: chunk.chunk_index, parentId: chunk.parent_id });
     } catch (e: any) {
       log("chunk_failed", { error: e?.message });
       await admin.from("processing_chunks")
         .update({ status: "failed", error: e?.message })
         .eq("id", chunk.id);
+    }
+  }
+
+  // After processing all available chunks, check if any parent is fully done and needs finalization.
+  if (parentId) {
+    const { data: allChunks } = await admin
+      .from("processing_chunks")
+      .select("chunk_index, start_sec, duration_sec, transcript, status, parent_type")
+      .eq("parent_id", parentId)
+      .order("chunk_index");
+
+    if (allChunks && allChunks.length > 0) {
+      const allDone = allChunks.every((c) => c.status === "done");
+      log("finalize_check", { parentId, total: allChunks.length, done: allChunks.filter((c) => c.status === "done").length, allDone });
+      if (allDone) {
+        const parentType = allChunks[0].parent_type as "sop" | "session";
+        if (parentType === "session") {
+          await finalizeSession(admin, parentId, allChunks);
+        } else {
+          await finalizeSop(admin, parentId, allChunks);
+        }
+      }
     }
   }
 

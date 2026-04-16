@@ -69,11 +69,13 @@ export async function POST(req: Request) {
     const chunks = await splitVideo(buf, file_type);
     log("split", { chunks: chunks.length });
 
+    let stored = 0;
     for (const chunk of chunks) {
       const chunkPath = `${facilityId}/chunks/${session.id}_${chunk.index}.mp4`;
       await putObject(chunkPath, chunk.buf, file_type);
+      log("r2-stored", { index: chunk.index, sizeMB: +(chunk.buf.length / 1024 / 1024).toFixed(2) });
 
-      await admin.from("processing_chunks").insert({
+      const { error: insertErr } = await admin.from("processing_chunks").insert({
         parent_type: "session",
         parent_id: session.id,
         chunk_index: chunk.index,
@@ -82,8 +84,13 @@ export async function POST(req: Request) {
         file_path: chunkPath,
         status: "pending",
       });
+      if (insertErr) {
+        console.error("[process-session] chunk insert failed:", { index: chunk.index, error: insertErr.message });
+        return fail("chunk-insert", `chunk ${chunk.index}: ${insertErr.message}`);
+      }
+      stored++;
     }
-    log("chunks-stored", chunks.length);
+    log("chunks-stored", { stored, total: chunks.length });
 
     return NextResponse.json({ ok: true, session, chunksTotal: chunks.length });
   } catch (e: any) {
