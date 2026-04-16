@@ -36,6 +36,7 @@ export default function Nav({
     role === "admin"
       ? [
           { k: "procedures", l: t(lang, "procedures"), href: "/procedures" },
+          { k: "sessions", l: t(lang, "sessions"), href: "/sessions" },
           { k: "chat", l: t(lang, "ask"), href: "/chat" },
           { k: "dashboard", l: t(lang, "dashboard"), href: "/dashboard" },
         ]

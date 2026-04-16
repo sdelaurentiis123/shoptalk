@@ -3,6 +3,7 @@ import { getAuthContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import Nav from "@/components/nav";
+import ClientProviders from "@/components/providers/client-providers";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, role, facilityId, facilityIds, isPlatformAdmin, language } = await getAuthContext();
@@ -42,7 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <>
+    <ClientProviders>
       <Nav
         role={effectiveRole}
         lang={language}
@@ -53,6 +54,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         allWorkspaces={allWorkspaces}
       />
       {children}
-    </>
+    </ClientProviders>
   );
 }

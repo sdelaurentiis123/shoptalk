@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
-import { processWithGemini } from "@/lib/gemini";
+import { processVideo } from "@/lib/video-processing";
+import type { GeminiOut } from "@/lib/types";
 import { getObjectBuffer, presignGet } from "@/lib/r2";
 import { markTranslationPending } from "@/lib/translate";
 
@@ -51,10 +52,11 @@ export async function POST(req: Request) {
       console.warn("[process-upload] presignGet failed (will re-sign on demand):", e);
     }
 
-    let gemini;
+    let gemini: GeminiOut;
     try {
       log("gemini:start");
-      gemini = await processWithGemini(buf, file_type, file_name);
+      const processed = await processVideo(buf, file_type, file_name, "sop");
+      gemini = processed.result as GeminiOut;
       log("gemini:done", {
         title: gemini.title,
         steps: gemini.steps?.length,

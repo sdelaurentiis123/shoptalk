@@ -163,6 +163,41 @@ create policy flags_admin_update on flags for update
   using (public.is_facility_admin(facility_id))
   with check (public.is_facility_admin(facility_id));
 
+-- ───────── Work sessions ─────────
+alter table work_sessions enable row level security;
+alter table session_topics enable row level security;
+alter table session_key_points enable row level security;
+alter table processing_chunks enable row level security;
+
+drop policy if exists ws_read on work_sessions;
+create policy ws_read on work_sessions for select
+  using (facility_id in (select public.my_facility_ids()));
+drop policy if exists ws_admin_write on work_sessions;
+create policy ws_admin_write on work_sessions for all
+  using (public.is_facility_admin(facility_id))
+  with check (public.is_facility_admin(facility_id));
+
+drop policy if exists st_read on session_topics;
+create policy st_read on session_topics for select
+  using (session_id in (select id from work_sessions where facility_id in (select public.my_facility_ids())));
+drop policy if exists st_admin_write on session_topics;
+create policy st_admin_write on session_topics for all
+  using (session_id in (select id from work_sessions where public.is_facility_admin(facility_id)))
+  with check (session_id in (select id from work_sessions where public.is_facility_admin(facility_id)));
+
+drop policy if exists skp_read on session_key_points;
+create policy skp_read on session_key_points for select
+  using (session_id in (select id from work_sessions where facility_id in (select public.my_facility_ids())));
+drop policy if exists skp_admin_write on session_key_points;
+create policy skp_admin_write on session_key_points for all
+  using (session_id in (select id from work_sessions where public.is_facility_admin(facility_id)))
+  with check (session_id in (select id from work_sessions where public.is_facility_admin(facility_id)));
+
+-- Processing chunks: service-role only (admin client bypasses RLS); no anon access.
+drop policy if exists pc_deny_all on processing_chunks;
+create policy pc_deny_all on processing_chunks for all
+  using (false) with check (false);
+
 -- ───────── Storage ─────────
 insert into storage.buckets (id, name, public)
 values ('sop-files', 'sop-files', false)

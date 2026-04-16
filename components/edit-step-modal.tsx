@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Filmstrip from "./filmstrip";
+import TimeScrubber from "./time-scrubber";
 import { fmtTime } from "@/lib/utils";
 import type { StepWithSubsteps, LangCode } from "@/lib/types";
 import { t } from "@/lib/i18n";
@@ -132,30 +133,31 @@ export default function EditStepModal({
                   className="w-full px-2.5 py-2 border border-border rounded-lg text-[13px] outline-none bg-surface resize-none"
                 />
                 {isVideo && totalSeconds > 0 && (
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <input
-                      value={sub.time_sec ?? ""}
-                      onChange={(e) => {
+                  <div className="mt-1.5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <button
+                        onClick={() => {
+                          const n = [...substeps];
+                          n[i] = { ...n[i], time_sec: Math.round(currentVideoSec) };
+                          setSubsteps(n);
+                        }}
+                        className="px-2.5 py-[3px] bg-primary text-white rounded text-[11px] font-medium"
+                      >
+                        {t(lang, "setFromVideo")}
+                      </button>
+                      {sub.time_sec != null && (
+                        <span className="text-[11px] text-text-tertiary">{fmtTime(sub.time_sec)}</span>
+                      )}
+                    </div>
+                    <TimeScrubber
+                      totalSeconds={totalSeconds}
+                      value={sub.time_sec}
+                      onChange={(sec) => {
                         const n = [...substeps];
-                        n[i] = { ...n[i], time_sec: parseInt(e.target.value) || 0 };
+                        n[i] = { ...n[i], time_sec: sec };
                         setSubsteps(n);
                       }}
-                      className="w-12 px-1.5 py-1 border border-border rounded text-[12px] text-center"
                     />
-                    <span className="text-[11px] text-text-tertiary">{t(lang, "seconds")}</span>
-                    <button
-                      onClick={() => {
-                        const n = [...substeps];
-                        n[i] = { ...n[i], time_sec: Math.round(currentVideoSec) };
-                        setSubsteps(n);
-                      }}
-                      className="px-2.5 py-[3px] bg-primary text-white rounded text-[11px] font-medium"
-                    >
-                      {t(lang, "setFromVideo")}
-                    </button>
-                    {sub.time_sec != null && (
-                      <span className="text-[11px] text-text-tertiary">({fmtTime(sub.time_sec)})</span>
-                    )}
                   </div>
                 )}
               </div>

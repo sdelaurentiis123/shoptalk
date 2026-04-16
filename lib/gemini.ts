@@ -13,7 +13,7 @@ function ai() {
   return _ai;
 }
 
-const SYSTEM_PROMPT = `You are a senior manufacturing operations analyst. You watch training videos and technical documents and turn them into floor-ready Standard Operating Procedures that a line operator — possibly a non-native English speaker — can follow to do the job correctly and safely.
+export const SOP_PROMPT = `You are a senior manufacturing operations analyst. You watch training videos and technical documents and turn them into floor-ready Standard Operating Procedures that a line operator — possibly a non-native English speaker — can follow to do the job correctly and safely.
 
 You produce EVERY piece of text in BOTH English (en) and Spanish (es). Spanish is for native Spanish-speaking operators. Use neutral Latin-American Spanish. Do not mix languages within a field. The Spanish version should be a faithful translation of the English version — same meaning, same structure, same order of substeps.
 
@@ -312,7 +312,7 @@ async function uploadAndWait(buf: Buffer, mimeType: string, fileName: string) {
   for (let i = 0; i < 150 && file.state !== "ACTIVE"; i++) {
     if (file.state === "FAILED")
       throw new Error(`Gemini file processing failed: ${JSON.stringify(file)}`);
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1000));
     file = await withTimeout(ai().files.get({ name: fileName0 }), 15_000, "files.get");
   }
   if (file.state !== "ACTIVE") throw new Error("Gemini: file did not become ACTIVE in time");
@@ -321,34 +321,48 @@ async function uploadAndWait(buf: Buffer, mimeType: string, fileName: string) {
   return { uri: file.uri, mimeType: file.mimeType };
 }
 
+export interface GeminiOpts {
+  prompt?: string;
+  thinkingLevel?: string;
+  prevContext?: string;
+  timeoutMs?: number;
+}
+
 export async function processWithGemini(
   buf: Buffer,
   mimeType: string,
   fileName: string,
+  opts?: GeminiOpts,
 ): Promise<GeminiOut> {
-  const isVideo = mimeType.startsWith("video/");
-  const isPdf = mimeType === "application/pdf";
+  const prompt = opts?.prompt ?? SOP_PROMPT;
+  const thinkingLevel = opts?.thinkingLevel ?? "high";
+  const timeoutMs = opts?.timeoutMs ?? 240_000;
 
+  const userPrompt = opts?.prevContext
+    ? `${opts.prevContext}\n\n${prompt}`
+    : prompt;
+
+  const isVideo = mimeType.startsWith("video/");
   const INLINE_LIMIT = 18 * 1024 * 1024;
   const useInline = !isVideo && buf.length < INLINE_LIMIT;
 
   const config = {
-    thinkingConfig: { thinkingLevel: "high" },
+    thinkingConfig: { thinkingLevel },
     mediaResolution: "MEDIA_RESOLUTION_HIGH",
   } as any;
 
-  console.log("[gemini] generate:start", { useInline });
+  console.log("[gemini] generate:start", { useInline, thinkingLevel });
   const response = useInline
     ? await withTimeout(
         ai().models.generateContent({
           model: MODEL,
           contents: createUserContent([
             { inlineData: { mimeType, data: buf.toString("base64") } },
-            SYSTEM_PROMPT,
+            userPrompt,
           ]),
           config,
         }),
-        240_000,
+        timeoutMs,
         "generateContent",
       )
     : await (async () => {
@@ -356,10 +370,10 @@ export async function processWithGemini(
         return withTimeout(
           ai().models.generateContent({
             model: MODEL,
-            contents: createUserContent([createPartFromUri(uri, uploadedMime), SYSTEM_PROMPT]),
+            contents: createUserContent([createPartFromUri(uri, uploadedMime), userPrompt]),
             config,
           }),
-          240_000,
+          timeoutMs,
           "generateContent",
         );
       })();
@@ -368,5 +382,6 @@ export async function processWithGemini(
   const text = response.text;
   if (!text) throw new Error("Gemini: empty response");
   const parsed = parseJson(text);
-  return sanitizeTimestamps(parsed, mimeType);
+  const isSopPrompt = prompt === SOP_PROMPT;
+  return isSopPrompt ? sanitizeTimestamps(parsed, mimeType) : parsed;
 }

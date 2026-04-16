@@ -36,30 +36,39 @@ export async function getAuthContext(): Promise<AuthContext> {
   // role bypasses RLS so we get a true answer.
   const admin = createAdminClient();
 
-  const { data: platformRow } = await admin
-    .from("platform_admins")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  const isPlatformAdmin = !!platformRow;
+  let isPlatformAdmin = false;
+  try {
+    const { data: platformRow } = await admin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    isPlatformAdmin = !!platformRow;
+  } catch {
+    // table may not exist yet
+  }
 
   let facilityIds: string[] = [];
   let language: LangCode = "en";
 
-  if (role === "admin") {
-    const { data: memberships } = await admin
-      .from("facility_members")
-      .select("facility_id")
-      .eq("user_id", user.id);
-    facilityIds = (memberships ?? []).map((m) => m.facility_id as string);
-  } else if (role === "operator") {
-    const { data: prof } = await admin
-      .from("operator_profiles")
-      .select("facility_id, language")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (prof?.facility_id) facilityIds = [prof.facility_id];
-    language = ((prof?.language as LangCode | undefined) ?? "en");
+  try {
+    if (role === "admin") {
+      const { data: memberships } = await admin
+        .from("facility_members")
+        .select("facility_id")
+        .eq("user_id", user.id);
+      facilityIds = (memberships ?? []).map((m) => m.facility_id as string);
+    } else if (role === "operator") {
+      const { data: prof } = await admin
+        .from("operator_profiles")
+        .select("facility_id, language")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (prof?.facility_id) facilityIds = [prof.facility_id];
+      language = ((prof?.language as LangCode | undefined) ?? "en");
+    }
+  } catch {
+    // table queries can fail if schema not yet applied
   }
 
   // Admins may have an active_facility_id cookie to pick among multiple workspaces.

@@ -135,3 +135,60 @@ export interface GeminiOut {
   transcript_es: string;
   steps: GeminiStepOut[];
 }
+
+// Work sessions
+export type SessionProcessingStatus = "pending" | "processing" | "summarizing" | "ready" | "failed";
+
+export interface TranscriptBeat {
+  timeSeconds: number;
+  text: string;
+}
+
+export interface SessionTopic {
+  id: string;
+  session_id: string;
+  sort_order: number;
+  title: string;
+  description: string;
+  start_sec: number | null;
+  end_sec: number | null;
+}
+
+export interface SessionKeyPoint {
+  id: string;
+  session_id: string;
+  sort_order: number;
+  text: string;
+  type: "technique" | "safety" | "quality" | "tool" | "other";
+  time_sec: number | null;
+}
+
+export interface SessionNotes {
+  title: string;
+  summary: string;
+  topics: { title: string; description: string; startSeconds: number; endSeconds: number }[];
+  keyPoints: { text: string; timeSeconds: number; type: string }[];
+  actionItems: { text: string; priority: string }[];
+}
+
+export interface WorkSession {
+  id: string;
+  facility_id: string;
+  station_id: string | null;
+  title: string;
+  summary: string;
+  file_path: string | null;
+  file_url: string | null;
+  total_seconds: number;
+  processing_status: SessionProcessingStatus;
+  processing_error: string | null;
+  raw_transcript: TranscriptBeat[];
+  notes: SessionNotes | Record<string, never>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkSessionWithDetails extends WorkSession {
+  topics: SessionTopic[];
+  keyPoints: SessionKeyPoint[];
+}
