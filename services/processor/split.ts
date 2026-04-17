@@ -49,10 +49,12 @@ export async function splitVideo(
       String(durationSec),
       "-i",
       inputPath,
+      "-map",
+      "0:v",
+      "-map",
+      "0:a?",
       "-c",
       "copy",
-      "-map",
-      "0",
       outPath,
     ]);
 

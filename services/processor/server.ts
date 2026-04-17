@@ -48,14 +48,15 @@ app.post("/process/sop", async (c) => {
 
   console.log(`[server] POST /process/sop sopId=${sopId}`);
 
-  processSop({ storageKey, fileType, fileName, facilityId, sopId })
-    .then(() => console.log(`[server] SOP ${sopId} complete`))
-    .catch(async (e) => {
-      console.error(`[server] SOP ${sopId} failed:`, e?.message);
-      await setSopError(sopId, e?.message ?? String(e));
-    });
-
-  return c.json({ ok: true, message: "processing started" });
+  try {
+    await processSop({ storageKey, fileType, fileName, facilityId, sopId });
+    console.log(`[server] SOP ${sopId} complete`);
+    return c.json({ ok: true, message: "processing complete" });
+  } catch (e: any) {
+    console.error(`[server] SOP ${sopId} failed:`, e?.message);
+    await setSopError(sopId, e?.message ?? String(e));
+    return c.json({ error: e?.message ?? String(e) }, 500);
+  }
 });
 
 app.post("/process/session", async (c) => {
@@ -69,14 +70,15 @@ app.post("/process/session", async (c) => {
 
   console.log(`[server] POST /process/session sessionId=${sessionId}`);
 
-  processSession({ storageKey, fileType, fileName, facilityId, sessionId })
-    .then(() => console.log(`[server] Session ${sessionId} complete`))
-    .catch(async (e) => {
-      console.error(`[server] Session ${sessionId} failed:`, e?.message);
-      await setSessionStatus(sessionId, "failed", e?.message ?? String(e));
-    });
-
-  return c.json({ ok: true, message: "processing started" });
+  try {
+    await processSession({ storageKey, fileType, fileName, facilityId, sessionId });
+    console.log(`[server] Session ${sessionId} complete`);
+    return c.json({ ok: true, message: "processing complete" });
+  } catch (e: any) {
+    console.error(`[server] Session ${sessionId} failed:`, e?.message);
+    await setSessionStatus(sessionId, "failed", e?.message ?? String(e));
+    return c.json({ error: e?.message ?? String(e) }, 500);
+  }
 });
 
 const port = parseInt(process.env.PORT || "3001", 10);
