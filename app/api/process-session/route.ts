@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
-import { getObjectBuffer, presignGet, putObject } from "@/lib/r2";
-import { splitVideo, warmBinaries } from "@/lib/ffmpeg";
+import { presignGet, putObject } from "@/lib/r2";
+import { warmBinaries, getVideoDurationFromUrl, splitVideoFromUrl } from "@/lib/ffmpeg";
+import { readFile, unlink } from "fs/promises";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+const CHUNK_DURATION_SEC = 90;
 
 function log(stage: string, extra?: unknown) {
   console.log(`[process-session] ${stage}`, extra ?? "");
@@ -34,16 +37,9 @@ export async function POST(req: Request) {
     log("received", { storage_path, file_type });
     const admin = createAdminClient();
 
-    // Download ffmpeg binaries in parallel with the video download (cold start optimization).
+    // Start binary download in parallel with URL generation
     const binariesReady = warmBinaries();
-
-    let buf: Buffer;
-    try {
-      buf = await getObjectBuffer(storage_path);
-    } catch (e: any) {
-      return fail("download", e?.message ?? "download failed");
-    }
-    log("downloaded", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
+    const url = await presignGet(storage_path, 3600);
 
     let signed_url: string | null = null;
     try {
@@ -68,37 +64,51 @@ export async function POST(req: Request) {
     if (sErr || !session) return fail("session-insert", sErr?.message ?? "no row");
     log("session-created", session.id);
 
-    // Wait for binaries before splitting.
     await binariesReady;
 
-    // Split and store chunks.
-    const chunks = await splitVideo(buf, file_type);
-    log("split", { chunks: chunks.length });
+    const duration = await getVideoDurationFromUrl(url);
+    log("duration", { seconds: duration });
 
-    let stored = 0;
-    for (const chunk of chunks) {
-      const chunkPath = `${facilityId}/chunks/${session.id}_${chunk.index}.mp4`;
-      await putObject(chunkPath, chunk.buf, file_type);
-      log("r2-stored", { index: chunk.index, sizeMB: +(chunk.buf.length / 1024 / 1024).toFixed(2) });
-
+    if (duration <= CHUNK_DURATION_SEC) {
+      // Single chunk: use original file
       const { error: insertErr } = await admin.from("processing_chunks").insert({
         parent_type: "session",
         parent_id: session.id,
-        chunk_index: chunk.index,
-        start_sec: chunk.startSec,
-        duration_sec: chunk.durationSec,
-        file_path: chunkPath,
+        chunk_index: 0,
+        start_sec: 0,
+        duration_sec: duration || 1,
+        file_path: storage_path,
         status: "pending",
       });
-      if (insertErr) {
-        console.error("[process-session] chunk insert failed:", { index: chunk.index, error: insertErr.message });
-        return fail("chunk-insert", `chunk ${chunk.index}: ${insertErr.message}`);
-      }
-      stored++;
-    }
-    log("chunks-stored", { stored, total: chunks.length });
+      if (insertErr) return fail("chunk-insert", insertErr.message);
+      log("single-chunk", { duration });
+    } else {
+      // Multi-chunk: stream from URL
+      let stored = 0;
+      await splitVideoFromUrl(url, file_type, duration, async (chunk) => {
+        const chunkPath = `${facilityId}/chunks/${session.id}_${chunk.index}.mp4`;
+        const chunkBuf = await readFile(chunk.tmpPath);
+        await putObject(chunkPath, chunkBuf, file_type);
+        await unlink(chunk.tmpPath);
+        log("chunk-stored", { index: chunk.index, sizeMB: +(chunkBuf.length / 1024 / 1024).toFixed(2) });
 
-    return NextResponse.json({ ok: true, session, chunksTotal: chunks.length });
+        const { error: insertErr } = await admin.from("processing_chunks").insert({
+          parent_type: "session",
+          parent_id: session.id,
+          chunk_index: chunk.index,
+          start_sec: chunk.startSec,
+          duration_sec: chunk.durationSec,
+          file_path: chunkPath,
+          status: "pending",
+        });
+        if (insertErr) throw new Error(`chunk ${chunk.index}: ${insertErr.message}`);
+        stored++;
+      });
+      log("chunks-stored", { stored });
+    }
+
+    const { data: chunkRows } = await admin.from("processing_chunks").select("id").eq("parent_id", session.id);
+    return NextResponse.json({ ok: true, session, chunksTotal: chunkRows?.length ?? 0 });
   } catch (e: any) {
     console.error("[process-session] UNCAUGHT:", e);
     return NextResponse.json({ error: `unhandled: ${e?.message ?? String(e)}` }, { status: 500 });

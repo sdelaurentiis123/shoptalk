@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { getObjectBuffer, presignGet, putObject } from "@/lib/r2";
-import { splitVideo, warmBinaries } from "@/lib/ffmpeg";
+import { warmBinaries, getVideoDurationFromUrl, splitVideoFromUrl } from "@/lib/ffmpeg";
 import { markTranslationPending } from "@/lib/translate";
+import { readFile, unlink } from "fs/promises";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+const CHUNK_DURATION_SEC = 90;
 
 function log(stage: string, extra?: unknown) {
   console.log(`[process-upload] ${stage}`, extra ?? "");
@@ -33,15 +36,11 @@ export async function POST(req: Request) {
     log("received", { storage_path, file_type });
     const admin = createAdminClient();
 
-    const binariesReady = warmBinaries();
-
-    let buf: Buffer;
-    try {
-      buf = await getObjectBuffer(storage_path);
-    } catch (e: any) {
-      return fail("download", e?.message ?? "download failed");
-    }
-    log("downloaded", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
+    const sopType = file_type.startsWith("video/")
+      ? "video"
+      : file_type === "application/pdf"
+        ? "pdf"
+        : "image";
 
     let signed_url: string | null = null;
     try {
@@ -50,13 +49,7 @@ export async function POST(req: Request) {
       console.warn("[process-upload] presignGet failed:", e);
     }
 
-    const sopType = file_type.startsWith("video/")
-      ? "video"
-      : file_type === "application/pdf"
-        ? "pdf"
-        : "image";
-
-    // Create the SOP row early (will be filled in by the cron when processing finishes).
+    // Create the SOP row early.
     const { data: sop, error: sopErr } = await admin
       .from("sops")
       .insert({
@@ -73,38 +66,57 @@ export async function POST(req: Request) {
     if (sopErr || !sop) return fail("sop-insert", sopErr?.message ?? "no row returned");
     log("sop-inserted", sop.id);
 
-    // Wait for binaries before splitting.
-    if (sopType === "video") await binariesReady;
-
-    // Split video into chunks and store them.
     if (sopType === "video") {
-      const chunks = await splitVideo(buf, file_type);
-      log("split", { chunks: chunks.length });
+      // Video: stream from R2, split, store chunks
+      const binariesReady = warmBinaries();
+      const url = await presignGet(storage_path, 3600);
+      await binariesReady;
 
-      let stored = 0;
-      for (const chunk of chunks) {
-        const chunkPath = `${facilityId}/chunks/${sop.id}_${chunk.index}.mp4`;
-        await putObject(chunkPath, chunk.buf, file_type);
-        log("r2-stored", { index: chunk.index, path: chunkPath, sizeMB: +(chunk.buf.length / 1024 / 1024).toFixed(2) });
+      const duration = await getVideoDurationFromUrl(url);
+      log("duration", { seconds: duration });
 
+      if (duration <= CHUNK_DURATION_SEC) {
+        // Single chunk: use original file, no split needed
         const { error: insertErr } = await admin.from("processing_chunks").insert({
           parent_type: "sop",
           parent_id: sop.id,
-          chunk_index: chunk.index,
-          start_sec: chunk.startSec,
-          duration_sec: chunk.durationSec,
-          file_path: chunkPath,
+          chunk_index: 0,
+          start_sec: 0,
+          duration_sec: duration || 1,
+          file_path: storage_path,
           status: "pending",
         });
-        if (insertErr) {
-          console.error("[process-upload] chunk insert failed:", { index: chunk.index, error: insertErr.message });
-          return fail("chunk-insert", `chunk ${chunk.index}: ${insertErr.message}`);
-        }
-        stored++;
+        if (insertErr) return fail("chunk-insert", insertErr.message);
+        log("single-chunk", { duration });
+      } else {
+        // Multi-chunk: stream from URL, one chunk at a time
+        let stored = 0;
+        await splitVideoFromUrl(url, file_type, duration, async (chunk) => {
+          const chunkPath = `${facilityId}/chunks/${sop.id}_${chunk.index}.mp4`;
+          const chunkBuf = await readFile(chunk.tmpPath);
+          await putObject(chunkPath, chunkBuf, file_type);
+          await unlink(chunk.tmpPath);
+          log("chunk-stored", { index: chunk.index, sizeMB: +(chunkBuf.length / 1024 / 1024).toFixed(2) });
+
+          const { error: insertErr } = await admin.from("processing_chunks").insert({
+            parent_type: "sop",
+            parent_id: sop.id,
+            chunk_index: chunk.index,
+            start_sec: chunk.startSec,
+            duration_sec: chunk.durationSec,
+            file_path: chunkPath,
+            status: "pending",
+          });
+          if (insertErr) throw new Error(`chunk ${chunk.index}: ${insertErr.message}`);
+          stored++;
+        });
+        log("chunks-stored", { stored });
       }
-      log("chunks-stored", { stored, total: chunks.length });
     } else {
-      // Non-video (PDF/image): process inline since it's fast.
+      // Non-video (PDF/image): download and process inline (small files)
+      const buf = await getObjectBuffer(storage_path);
+      log("downloaded", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
+
       const { processWithGemini } = await import("@/lib/gemini");
       const gemini = await processWithGemini(buf, file_type, file_name);
       await admin.from("sops").update({
