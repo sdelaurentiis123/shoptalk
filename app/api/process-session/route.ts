@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { getObjectBuffer, presignGet, putObject } from "@/lib/r2";
-import { splitVideo } from "@/lib/ffmpeg";
+import { splitVideo, warmBinaries } from "@/lib/ffmpeg";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 function log(stage: string, extra?: unknown) {
   console.log(`[process-session] ${stage}`, extra ?? "");
@@ -33,6 +33,9 @@ export async function POST(req: Request) {
 
     log("received", { storage_path, file_type });
     const admin = createAdminClient();
+
+    // Download ffmpeg binaries in parallel with the video download (cold start optimization).
+    const binariesReady = warmBinaries();
 
     let buf: Buffer;
     try {
@@ -64,6 +67,9 @@ export async function POST(req: Request) {
       .single();
     if (sErr || !session) return fail("session-insert", sErr?.message ?? "no row");
     log("session-created", session.id);
+
+    // Wait for binaries before splitting.
+    await binariesReady;
 
     // Split and store chunks.
     const chunks = await splitVideo(buf, file_type);

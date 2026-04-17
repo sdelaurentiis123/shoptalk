@@ -60,6 +60,12 @@ async function getFFprobePath(): Promise<string> {
   return TMP_FFPROBE;
 }
 
+export async function warmBinaries(): Promise<void> {
+  const t = Date.now();
+  await Promise.all([getFFmpegPath(), getFFprobePath()]);
+  console.log(`[ffmpeg] binaries ready in ${Date.now() - t}ms`);
+}
+
 export async function getVideoDuration(buf: Buffer): Promise<number> {
   const ffprobe = await getFFprobePath();
   const tmp = join(tmpdir(), `probe-${crypto.randomUUID()}.mp4`);

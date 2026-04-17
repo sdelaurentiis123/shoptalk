@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
 import { getObjectBuffer, presignGet, putObject } from "@/lib/r2";
-import { splitVideo } from "@/lib/ffmpeg";
+import { splitVideo, warmBinaries } from "@/lib/ffmpeg";
 import { markTranslationPending } from "@/lib/translate";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 function log(stage: string, extra?: unknown) {
   console.log(`[process-upload] ${stage}`, extra ?? "");
@@ -32,6 +32,8 @@ export async function POST(req: Request) {
 
     log("received", { storage_path, file_type });
     const admin = createAdminClient();
+
+    const binariesReady = warmBinaries();
 
     let buf: Buffer;
     try {
@@ -70,6 +72,9 @@ export async function POST(req: Request) {
       .single();
     if (sopErr || !sop) return fail("sop-insert", sopErr?.message ?? "no row returned");
     log("sop-inserted", sop.id);
+
+    // Wait for binaries before splitting.
+    if (sopType === "video") await binariesReady;
 
     // Split video into chunks and store them.
     if (sopType === "video") {
