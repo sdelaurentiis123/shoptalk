@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthContext } from "@/lib/auth";
-import { getObjectBuffer, presignGet, putObject } from "@/lib/r2";
-import { warmBinaries, getVideoDurationFromUrl, splitVideoFromUrl } from "@/lib/ffmpeg";
+import { getObjectBuffer, presignGet } from "@/lib/r2";
 import { markTranslationPending } from "@/lib/translate";
-import { readFile, unlink } from "fs/promises";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-const CHUNK_DURATION_SEC = 90;
 
 function log(stage: string, extra?: unknown) {
   console.log(`[process-upload] ${stage}`, extra ?? "");
@@ -49,7 +45,6 @@ export async function POST(req: Request) {
       console.warn("[process-upload] presignGet failed:", e);
     }
 
-    // Create the SOP row early.
     const { data: sop, error: sopErr } = await admin
       .from("sops")
       .insert({
@@ -67,53 +62,30 @@ export async function POST(req: Request) {
     log("sop-inserted", sop.id);
 
     if (sopType === "video") {
-      // Video: stream from R2, split, store chunks
-      const binariesReady = warmBinaries();
-      const url = await presignGet(storage_path, 3600);
-      await binariesReady;
+      // Fire-and-forget to Fly processor
+      const processorUrl = process.env.PROCESSOR_URL;
+      if (!processorUrl) return fail("config", "PROCESSOR_URL not set");
 
-      const duration = await getVideoDurationFromUrl(url);
-      log("duration", { seconds: duration });
+      fetch(`${processorUrl}/process/sop`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
+        },
+        body: JSON.stringify({
+          storageKey: storage_path,
+          fileType: file_type,
+          fileName: file_name,
+          facilityId,
+          sopId: sop.id,
+          stationId: station_id,
+        }),
+      }).catch(err => console.error("[process-upload] Fly trigger failed:", err));
 
-      if (duration <= CHUNK_DURATION_SEC) {
-        // Single chunk: use original file, no split needed
-        const { error: insertErr } = await admin.from("processing_chunks").insert({
-          parent_type: "sop",
-          parent_id: sop.id,
-          chunk_index: 0,
-          start_sec: 0,
-          duration_sec: duration || 1,
-          file_path: storage_path,
-          status: "pending",
-        });
-        if (insertErr) return fail("chunk-insert", insertErr.message);
-        log("single-chunk", { duration });
-      } else {
-        // Multi-chunk: stream from URL, one chunk at a time
-        let stored = 0;
-        await splitVideoFromUrl(url, file_type, duration, async (chunk) => {
-          const chunkPath = `${facilityId}/chunks/${sop.id}_${chunk.index}.mp4`;
-          const chunkBuf = await readFile(chunk.tmpPath);
-          await putObject(chunkPath, chunkBuf, file_type);
-          await unlink(chunk.tmpPath);
-          log("chunk-stored", { index: chunk.index, sizeMB: +(chunkBuf.length / 1024 / 1024).toFixed(2) });
-
-          const { error: insertErr } = await admin.from("processing_chunks").insert({
-            parent_type: "sop",
-            parent_id: sop.id,
-            chunk_index: chunk.index,
-            start_sec: chunk.startSec,
-            duration_sec: chunk.durationSec,
-            file_path: chunkPath,
-            status: "pending",
-          });
-          if (insertErr) throw new Error(`chunk ${chunk.index}: ${insertErr.message}`);
-          stored++;
-        });
-        log("chunks-stored", { stored });
-      }
+      log("fly-triggered", { sopId: sop.id });
+      return NextResponse.json({ ok: true, sop, chunksTotal: 0 });
     } else {
-      // Non-video (PDF/image): download and process inline (small files)
+      // Non-video (PDF/image): process inline on Vercel
       const buf = await getObjectBuffer(storage_path);
       log("downloaded", { sizeMB: +(buf.length / 1024 / 1024).toFixed(2) });
 
@@ -142,10 +114,9 @@ export async function POST(req: Request) {
         if (subs.length) await admin.from("substeps").insert(subs);
       }
       await markTranslationPending(admin, sop.id);
-    }
 
-    const { data: chunkRows } = await admin.from("processing_chunks").select("id").eq("parent_id", sop.id);
-    return NextResponse.json({ ok: true, sop, chunksTotal: chunkRows?.length ?? 0 });
+      return NextResponse.json({ ok: true, sop, chunksTotal: 0 });
+    }
   } catch (e: any) {
     console.error("[process-upload] UNCAUGHT:", e);
     return NextResponse.json({ error: `unhandled: ${e?.message ?? String(e)}` }, { status: 500 });
