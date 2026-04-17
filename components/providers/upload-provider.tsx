@@ -173,8 +173,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const parentId = mode === "session" ? proc.session?.id : proc.sop?.id;
         const chunksTotal = proc.chunksTotal ?? 0;
         const href = mode === "session" ? `/sessions/${parentId}` : `/procedures/${parentId}`;
+        const isVideo = file.type.startsWith("video/");
 
-        if (chunksTotal === 0) {
+        if (chunksTotal === 0 && !isVideo) {
           // Non-video (PDF/image) — already processed inline.
           setUpload(null);
           addToast(mode === "session" ? "Session ready!" : "SOP ready!", { type: "success", action: { label: "View", href } });
@@ -183,13 +184,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Fire process-stale to kick off chunk processing (scoped to this parent).
-        setUpload((u) => u ? { ...u, progress: 82, status: `Processing chunk 0/${chunksTotal}...` } : u);
-        fetch("/api/process-stale", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ parentId }),
-        }).catch(() => {});
+        // Video: Fly is processing. Poll until done.
+        setUpload((u) => u ? { ...u, progress: 82, status: "Processing video..." } : u);
 
         // Poll for progress.
         const poll = async (): Promise<void> => {
@@ -198,13 +194,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             try {
               const res = await fetch(`/api/processing-status?id=${parentId}&type=${mode === "session" ? "session" : "sop"}`);
               const data = await res.json();
-              const pct = 82 + Math.floor(((data.chunksDone ?? 0) / Math.max(data.chunksTotal ?? 1, 1)) * 16);
+              const total = data.chunksTotal ?? chunksTotal;
+              const done = data.chunksDone ?? 0;
+              const pct = total > 0
+                ? 82 + Math.floor((done / Math.max(total, 1)) * 16)
+                : 82;
               setUpload((u) => u ? {
                 ...u,
                 progress: Math.min(pct, 98),
                 status: data.status === "ready"
                   ? "Done!"
-                  : `Processing chunk ${data.chunksDone ?? 0}/${data.chunksTotal ?? chunksTotal}...`,
+                  : total > 0
+                    ? `Processing chunk ${done}/${total}...`
+                    : "Processing video...",
               } : u);
               if (data.status === "ready") return;
               if (data.status === "failed") throw new Error("Processing failed");
