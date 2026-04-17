@@ -23,15 +23,28 @@ async function fileExists(path: string): Promise<boolean> {
   try { await access(path, constants.X_OK); return true; } catch { return false; }
 }
 
+async function which(name: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec("which", [name]);
+    const p = stdout.trim();
+    return p || null;
+  } catch { return null; }
+}
+
 async function getFFmpegPath(): Promise<string> {
-  // Local dev: use npm package binary
+  // 1. npm devDependency
   try {
     const mod = await import("ffmpeg-static");
     const p = (mod.default ?? mod) as string;
     if (p && await fileExists(p)) return p;
   } catch {}
 
-  // Vercel: download from R2 to /tmp on cold start
+  // 2. System binary (Homebrew, apt, etc.)
+  const sys = await which("ffmpeg");
+  if (sys) return sys;
+
+  // 3. Vercel (Linux): download from R2 to /tmp
+  if (process.platform !== "linux") throw new Error("ffmpeg not found (not Linux, can't use R2 binary)");
   if (await fileExists(TMP_FFMPEG)) return TMP_FFMPEG;
   console.log("[ffmpeg] downloading ffmpeg binary from R2...");
   const buf = await getObjectBuffer("_bin/ffmpeg-linux-x64");
@@ -42,7 +55,7 @@ async function getFFmpegPath(): Promise<string> {
 }
 
 async function getFFprobePath(): Promise<string> {
-  // Local dev: use npm package binary
+  // 1. npm devDependency
   try {
     // @ts-ignore
     const mod = await import("ffprobe-static");
@@ -50,7 +63,12 @@ async function getFFprobePath(): Promise<string> {
     if (p && await fileExists(p)) return p;
   } catch {}
 
-  // Vercel: download from R2 to /tmp on cold start
+  // 2. System binary
+  const sys = await which("ffprobe");
+  if (sys) return sys;
+
+  // 3. Vercel (Linux): download from R2 to /tmp
+  if (process.platform !== "linux") throw new Error("ffprobe not found (not Linux, can't use R2 binary)");
   if (await fileExists(TMP_FFPROBE)) return TMP_FFPROBE;
   console.log("[ffmpeg] downloading ffprobe binary from R2...");
   const buf = await getObjectBuffer("_bin/ffprobe-linux-x64");
