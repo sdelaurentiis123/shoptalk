@@ -113,7 +113,7 @@ export async function finalizeSop(
       total_seconds: sop.type === "video" ? totalSeconds : 0,
       transcript: gemini.transcript ?? "",
       transcript_es: gemini.transcript_es ?? "",
-      translation_status: "pending",
+      translation_status: "ready",
       translation_claimed_at: null,
     })
     .eq("id", sopId);
