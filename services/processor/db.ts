@@ -113,6 +113,8 @@ export async function finalizeSop(
       total_seconds: sop.type === "video" ? totalSeconds : 0,
       transcript: gemini.transcript ?? "",
       transcript_es: gemini.transcript_es ?? "",
+      translation_status: "pending",
+      translation_claimed_at: null,
     })
     .eq("id", sopId);
 
@@ -142,35 +144,6 @@ export async function finalizeSop(
     }));
     if (subs.length) await db.from("substeps").insert(subs);
   }
-}
-
-export async function markTranslationPending(sopId: string): Promise<void> {
-  const db = admin();
-  const { data: sop } = await db
-    .from("sops")
-    .select("id, title, description, transcript")
-    .eq("id", sopId)
-    .maybeSingle();
-  if (!sop) return;
-
-  const { createHash } = await import("crypto");
-  const hash = createHash("sha256")
-    .update(
-      JSON.stringify({
-        title: sop.title,
-        description: sop.description,
-        transcript: sop.transcript,
-      }),
-    )
-    .digest("hex");
-
-  await db
-    .from("sops")
-    .update({
-      translation_status: "pending",
-      english_hash: hash,
-    })
-    .eq("id", sopId);
 }
 
 export async function finalizeSession(

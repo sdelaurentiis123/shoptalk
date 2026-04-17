@@ -9,7 +9,6 @@ import {
   updateChunkDone,
   updateChunkFailed,
   finalizeSop,
-  markTranslationPending,
 } from "./db.js";
 import type { GeminiOut } from "./types.js";
 
@@ -60,7 +59,6 @@ export async function processSop(params: {
       await updateChunkDone(chunkRows[0].id, result);
 
       await finalizeSop(sopId, result, duration);
-      await markTranslationPending(sopId);
       log("done", { sopId });
       return;
     }
@@ -174,7 +172,6 @@ export async function processSop(params: {
     };
 
     await finalizeSop(sopId, stitched, totalSeconds);
-    await markTranslationPending(sopId);
     log("done", { sopId, steps: allSteps.length });
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
