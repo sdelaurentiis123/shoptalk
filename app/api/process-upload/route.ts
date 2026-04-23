@@ -66,21 +66,33 @@ export async function POST(req: Request) {
       const processorUrl = process.env.PROCESSOR_URL;
       if (!processorUrl) return fail("config", "PROCESSOR_URL not set");
 
-      fetch(`${processorUrl}/process/sop`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
-        },
-        body: JSON.stringify({
-          storageKey: storage_path,
-          fileType: file_type,
-          fileName: file_name,
-          facilityId,
-          sopId: sop.id,
-          stationId: station_id,
-        }),
-      }).catch(err => console.error("[process-upload] Fly trigger failed:", err));
+      // Await the 202 ack so the request reaches Fly before the Vercel
+      // isolate is torn down. The cron fallback catches any dropped kicks.
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 30_000);
+        const res = await fetch(`${processorUrl}/process/sop`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
+          },
+          body: JSON.stringify({
+            storageKey: storage_path,
+            fileType: file_type,
+            fileName: file_name,
+            facilityId,
+            sopId: sop.id,
+            stationId: station_id,
+          }),
+          signal: ctrl.signal,
+        }).finally(() => clearTimeout(timer));
+        if (!res.ok) {
+          console.error(`[process-upload] Fly returned ${res.status}`);
+        }
+      } catch (err) {
+        console.error("[process-upload] Fly trigger failed:", err);
+      }
 
       log("fly-triggered", { sopId: sop.id });
       return NextResponse.json({ ok: true, sop, chunksTotal: 0 });
