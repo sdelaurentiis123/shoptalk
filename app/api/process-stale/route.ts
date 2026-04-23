@@ -45,27 +45,20 @@ export async function POST(req: Request) {
 
     if (sop && sop.type === "video") {
       log("retrigger-sop", { sopId: parentId });
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 30_000);
-        await fetch(`${processorUrl}/process/sop`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
-          },
-          body: JSON.stringify({
-            storageKey: sop.file_path,
-            fileType: "video/mp4",
-            fileName: "retrigger",
-            facilityId: sop.facility_id,
-            sopId: sop.id,
-          }),
-          signal: ctrl.signal,
-        }).finally(() => clearTimeout(timer));
-      } catch (err: any) {
-        log("retrigger-failed", { error: err?.message });
-      }
+      fetch(`${processorUrl}/process/sop`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
+        },
+        body: JSON.stringify({
+          storageKey: sop.file_path,
+          fileType: "video/mp4",
+          fileName: "retrigger",
+          facilityId: sop.facility_id,
+          sopId: sop.id,
+        }),
+      }).catch(err => log("retrigger-failed", { error: err?.message }));
       return NextResponse.json({ ok: true, action: "retriggered_sop" });
     }
 
@@ -77,27 +70,20 @@ export async function POST(req: Request) {
 
     if (session) {
       log("retrigger-session", { sessionId: parentId });
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 30_000);
-        await fetch(`${processorUrl}/process/session`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
-          },
-          body: JSON.stringify({
-            storageKey: session.file_path,
-            fileType: "video/mp4",
-            fileName: "retrigger",
-            facilityId: session.facility_id,
-            sessionId: session.id,
-          }),
-          signal: ctrl.signal,
-        }).finally(() => clearTimeout(timer));
-      } catch (err: any) {
-        log("retrigger-failed", { error: err?.message });
-      }
+      fetch(`${processorUrl}/process/session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.PROCESSOR_SECRET || ""}`,
+        },
+        body: JSON.stringify({
+          storageKey: session.file_path,
+          fileType: "video/mp4",
+          fileName: "retrigger",
+          facilityId: session.facility_id,
+          sessionId: session.id,
+        }),
+      }).catch(err => log("retrigger-failed", { error: err?.message }));
       return NextResponse.json({ ok: true, action: "retriggered_session" });
     }
   }

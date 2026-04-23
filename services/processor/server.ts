@@ -37,55 +37,48 @@ app.use("*", async (c, next) => {
 
 app.get("/health", (c) => c.json({ ok: true }));
 
-// Ack fast so Vercel's fire-and-forget fetch resolves before the isolate
-// is torn down; run the long pipeline in the background. Machine stays up
-// via fly.toml min_machines_running=1, not HTTP connection liveness.
 app.post("/process/sop", async (c) => {
   const body = await c.req.json();
-  const { storageKey, fileType, fileName, facilityId, sopId } = body;
+  const { storageKey, fileType, fileName, facilityId, sopId, stationId } =
+    body;
 
   if (!storageKey || !fileType || !facilityId || !sopId) {
     return c.json({ error: "missing required fields" }, 400);
   }
 
-  console.log(`[server] POST /process/sop sopId=${sopId} (background)`);
+  console.log(`[server] POST /process/sop sopId=${sopId}`);
 
-  processSop({ storageKey, fileType, fileName, facilityId, sopId })
-    .then(() => console.log(`[server] SOP ${sopId} complete`))
-    .catch(async (e: any) => {
-      console.error(`[server] SOP ${sopId} failed:`, e?.message);
-      try {
-        await setSopError(sopId, e?.message ?? String(e));
-      } catch (dbErr) {
-        console.error(`[server] SOP ${sopId} setSopError failed:`, dbErr);
-      }
-    });
-
-  return c.json({ ok: true, message: "processing started" }, 202);
+  try {
+    await processSop({ storageKey, fileType, fileName, facilityId, sopId });
+    console.log(`[server] SOP ${sopId} complete`);
+    return c.json({ ok: true, message: "processing complete" });
+  } catch (e: any) {
+    console.error(`[server] SOP ${sopId} failed:`, e?.message);
+    await setSopError(sopId, e?.message ?? String(e));
+    return c.json({ error: e?.message ?? String(e) }, 500);
+  }
 });
 
 app.post("/process/session", async (c) => {
   const body = await c.req.json();
-  const { storageKey, fileType, fileName, facilityId, sessionId } = body;
+  const { storageKey, fileType, fileName, facilityId, sessionId, stationId } =
+    body;
 
   if (!storageKey || !fileType || !facilityId || !sessionId) {
     return c.json({ error: "missing required fields" }, 400);
   }
 
-  console.log(`[server] POST /process/session sessionId=${sessionId} (background)`);
+  console.log(`[server] POST /process/session sessionId=${sessionId}`);
 
-  processSession({ storageKey, fileType, fileName, facilityId, sessionId })
-    .then(() => console.log(`[server] Session ${sessionId} complete`))
-    .catch(async (e: any) => {
-      console.error(`[server] Session ${sessionId} failed:`, e?.message);
-      try {
-        await setSessionStatus(sessionId, "failed", e?.message ?? String(e));
-      } catch (dbErr) {
-        console.error(`[server] Session ${sessionId} setSessionStatus failed:`, dbErr);
-      }
-    });
-
-  return c.json({ ok: true, message: "processing started" }, 202);
+  try {
+    await processSession({ storageKey, fileType, fileName, facilityId, sessionId });
+    console.log(`[server] Session ${sessionId} complete`);
+    return c.json({ ok: true, message: "processing complete" });
+  } catch (e: any) {
+    console.error(`[server] Session ${sessionId} failed:`, e?.message);
+    await setSessionStatus(sessionId, "failed", e?.message ?? String(e));
+    return c.json({ error: e?.message ?? String(e) }, 500);
+  }
 });
 
 const port = parseInt(process.env.PORT || "3001", 10);
