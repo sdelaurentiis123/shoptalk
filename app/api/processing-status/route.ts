@@ -22,17 +22,26 @@ export async function GET(req: Request) {
   const failed = chunks?.filter((c) => c.status === "failed").length ?? 0;
 
   let status: "processing" | "ready" | "failed" = "processing";
-  if (failed > 0) status = "failed";
-  else if (done === total && total > 0) {
-    // Check if parent is finalized
-    const table = type === "session" ? "work_sessions" : "sops";
-    if (type === "session") {
-      const { data } = await admin.from(table).select("processing_status").eq("id", id).maybeSingle();
-      status = data?.processing_status === "ready" ? "ready" : "processing";
-    } else {
-      const { data: steps } = await admin.from("steps").select("id").eq("sop_id", id).limit(1);
-      status = steps && steps.length > 0 ? "ready" : "processing";
-    }
+  if (failed > 0) {
+    status = "failed";
+  } else if (type === "session") {
+    // Sessions own their state via work_sessions.processing_status. Read it
+    // directly so pre-chunk and post-chunk (Claude) failures surface as
+    // "failed" instead of polling forever.
+    const { data } = await admin
+      .from("work_sessions")
+      .select("processing_status")
+      .eq("id", id)
+      .maybeSingle();
+    const ps = data?.processing_status;
+    if (ps === "failed") status = "failed";
+    else if (ps === "ready") status = "ready";
+    else status = "processing"; // pending, processing, summarizing
+  } else if (done === total && total > 0) {
+    // SOPs: ready iff finalizeSop wrote steps. Pre-chunk failures are
+    // surfaced via the sentinel chunk in setSopError (failed > 0 above).
+    const { data: steps } = await admin.from("steps").select("id").eq("sop_id", id).limit(1);
+    status = steps && steps.length > 0 ? "ready" : "processing";
   }
 
   return NextResponse.json({ chunksTotal: total, chunksDone: done, status });
