@@ -61,7 +61,7 @@ export async function POST(req: Request) {
 
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      const timer = setTimeout(() => ctrl.abort(), 60_000);
       const res = await fetch(`${processorUrl}/process/session`, {
         method: "POST",
         headers: {

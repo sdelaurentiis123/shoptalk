@@ -70,7 +70,7 @@ export async function POST(req: Request) {
       // isolate is torn down. The cron fallback catches any dropped kicks.
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 30_000);
+        const timer = setTimeout(() => ctrl.abort(), 60_000);
         const res = await fetch(`${processorUrl}/process/sop`, {
           method: "POST",
           headers: {

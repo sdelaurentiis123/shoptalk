@@ -212,4 +212,28 @@ export async function setSopError(
   error: string,
 ): Promise<void> {
   console.error(`[db] SOP ${sopId} failed: ${error}`);
+  // sops has no processing_status column. Insert a sentinel failed chunk at
+  // index -1 so /api/processing-status sees failed>0 and the frontend poller
+  // exits with status="failed" instead of polling forever. Real chunks index
+  // from 0; -1 won't collide. Idempotent via upsert on (parent_id, chunk_index).
+  try {
+    const { error: dbErr } = await admin()
+      .from("processing_chunks")
+      .upsert(
+        {
+          parent_type: "sop",
+          parent_id: sopId,
+          chunk_index: -1,
+          start_sec: 0,
+          duration_sec: 0,
+          file_path: "",
+          status: "failed",
+          error: error.slice(0, 1000),
+        },
+        { onConflict: "parent_id,chunk_index" },
+      );
+    if (dbErr) console.error(`[db] setSopError marker upsert: ${dbErr.message}`);
+  } catch (dbErr) {
+    console.error(`[db] setSopError marker threw:`, dbErr);
+  }
 }

@@ -47,7 +47,7 @@ export async function GET(req: Request) {
     log("retrigger-sop", { sopId: sop.id });
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      const timer = setTimeout(() => ctrl.abort(), 60_000);
       await fetch(`${processorUrl}/process/sop`, {
         method: "POST",
         headers: {
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
     log("retrigger-session", { sessionId: session.id });
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      const timer = setTimeout(() => ctrl.abort(), 60_000);
       await fetch(`${processorUrl}/process/session`, {
         method: "POST",
         headers: {
