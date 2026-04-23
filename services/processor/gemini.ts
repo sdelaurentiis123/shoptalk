@@ -202,6 +202,51 @@ function withTimeout<T>(
   ]);
 }
 
+function isTransientGeminiError(e: unknown): boolean {
+  const err = e as any;
+  const status = err?.status ?? err?.response?.status;
+  if (status === 503 || status === 429 || status === 500 || status === 504) return true;
+  const msg = typeof err?.message === "string" ? err.message.toLowerCase() : "";
+  return (
+    msg.includes("503") ||
+    msg.includes("429") ||
+    msg.includes("500") ||
+    msg.includes("504") ||
+    msg.includes("unavailable") ||
+    msg.includes("overloaded") ||
+    msg.includes("high demand") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("rate limit")
+  );
+}
+
+async function generateContentWithRetry<T>(
+  call: () => Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  const MAX_ATTEMPTS = 4;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await withTimeout(call(), timeoutMs, label);
+    } catch (e) {
+      lastErr = e;
+      const transient = isTransientGeminiError(e);
+      if (!transient || attempt === MAX_ATTEMPTS) throw e;
+      const base = 3000 * Math.pow(3, attempt - 1);
+      const jitter = Math.floor(Math.random() * 1500);
+      const delay = base + jitter;
+      console.warn(
+        `[gemini] ${label} transient failure (attempt ${attempt}/${MAX_ATTEMPTS}), retry in ${delay}ms:`,
+        (e as any)?.message ?? e,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 const RESUMABLE_THRESHOLD = 20 * 1024 * 1024;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
@@ -388,15 +433,16 @@ export async function processWithGemini(
 
   console.log("[gemini] generate:start", { useInline, thinkingLevel });
   const response = useInline
-    ? await withTimeout(
-        ai().models.generateContent({
-          model: MODEL,
-          contents: createUserContent([
-            { inlineData: { mimeType, data: buf.toString("base64") } },
-            prompt,
-          ]),
-          config,
-        }),
+    ? await generateContentWithRetry(
+        () =>
+          ai().models.generateContent({
+            model: MODEL,
+            contents: createUserContent([
+              { inlineData: { mimeType, data: buf.toString("base64") } },
+              prompt,
+            ]),
+            config,
+          }),
         timeoutMs,
         "generateContent",
       )
@@ -406,15 +452,16 @@ export async function processWithGemini(
           mimeType,
           fileName,
         );
-        return withTimeout(
-          ai().models.generateContent({
-            model: MODEL,
-            contents: createUserContent([
-              createPartFromUri(uri, uploadedMime),
-              prompt,
-            ]),
-            config,
-          }),
+        return generateContentWithRetry(
+          () =>
+            ai().models.generateContent({
+              model: MODEL,
+              contents: createUserContent([
+                createPartFromUri(uri, uploadedMime),
+                prompt,
+              ]),
+              config,
+            }),
           timeoutMs,
           "generateContent",
         );
